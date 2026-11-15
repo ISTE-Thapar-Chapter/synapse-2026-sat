@@ -1,4 +1,4 @@
-# Registrations
+# Step 1: Registrations and account setup
 
 ## Overview
 

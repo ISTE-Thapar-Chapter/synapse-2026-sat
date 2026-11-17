@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.js';
-import { useStage } from '../context/StageContext.js';
 import { api } from '../services/api.js';
 import { Card } from '../components/UI/Card.js';
 import { Badge } from '../components/UI/Badge.js';
@@ -8,111 +7,469 @@ import { Button } from '../components/UI/Button.js';
 import { Alert } from '../components/UI/Alert.js';
 import { Modal } from '../components/UI/Modal.js';
 import { EmptyState } from '../components/UI/EmptyState.js';
-import { Submission, CompanyAssignmentItem } from '../types/index.js';
+import { Submission, LeaderboardEntry } from '../types/index.js';
 import {
-  ExternalLink,
   Save,
   Send,
-  Building,
-  Github,
   CheckCircle2,
   Download,
+  Award,
   Layers,
+  Sparkles,
+  ExternalLink,
+  Lock,
+  Clock,
+  RotateCw,
 } from 'lucide-react';
 
 export const TeamPortal: React.FC = () => {
   const { user, participant, team, isLeader } = useAuth();
-  const { activeStage } = useStage();
 
-  const [submission, setSubmission] = useState<Submission | null>(null);
+  // Navigation / Section State (persisted across page reloads)
+  const [activeSection, setActiveSection] = useState<'cleaning' | 'requirements' | 'leaderboard'>('cleaning');
+
+  // Event & Submissions State
+  const [isEventStarted, setIsEventStarted] = useState<boolean>(false);
   const [cleaningDataset, setCleaningDataset] = useState<{
     title: string;
     fileUrl: string;
     description?: string;
   } | null>(null);
   const [hasSubmittedCleaning, setHasSubmittedCleaning] = useState<boolean>(false);
-  const [requirements, setRequirements] = useState<string[]>([]);
-  const [assignedCompany, setAssignedCompany] = useState<CompanyAssignmentItem | null>(null);
+  const [hasSubmittedRequirements, setHasSubmittedRequirements] = useState<boolean>(false);
+  const [cleaningSubmission, setCleaningSubmission] = useState<Submission | null>(null);
+  const [requirementsSubmission, setRequirementsSubmission] = useState<Submission | null>(null);
+  const [requirementsList, setRequirementsList] = useState<string[]>([]);
+
+  // Leaderboard data
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState<boolean>(false);
+
+  // Status & Notifications
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [confirmSubmitModal, setConfirmSubmitModal] = useState<boolean>(false);
 
-  // Form states
+  // Modals & Errors
+  const [confirmCleanModal, setConfirmCleanModal] = useState<boolean>(false);
+  const [cleanSubmitError, setCleanSubmitError] = useState<string | null>(null);
+  const [confirmReqModal, setConfirmReqModal] = useState<boolean>(false);
+  const [reqSubmitError, setReqSubmitError] = useState<string | null>(null);
+
+  // Form: Dataset Cleaning
   const [formCleaning, setFormCleaning] = useState({
     cleanedDatasetUrl: '',
     cleaningSummary: '',
     cleaningNotes: '',
   });
 
-  const [formModel, setFormModel] = useState({
+  // Form: Five Requirements & Company Methodologies
+  const [formRequirements, setFormRequirements] = useState<{
+    companyName: string;
+    methodologySummary: string;
+    requirements: Array<{ title: string; response: string; link: string; notes: string }>;
+    generalNotes: string;
+  }>({
     companyName: '',
-    approachDescription: '',
-    accuracyResults: '',
-    githubUrl: '',
+    methodologySummary: '',
+    requirements: [],
+    generalNotes: '',
   });
 
-  const [formFinal, setFormFinal] = useState({
-    title: '',
-    productDescription: '',
-    sourceUrl: '',
-  });
+  const teamId = team?._id || '';
 
-  const loadTeamData = async () => {
-    setLoading(true);
+  // -------------------------------------------------------------
+  // Data Loading & Auto-sync
+  // -------------------------------------------------------------
+  const loadTeamData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const data = await api.get<{
-        activeStage: string;
+        isEventStarted: boolean;
         team: any;
         isLeader: boolean;
-        submission: Submission | null;
         cleaningDataset: { title: string; fileUrl: string; description?: string } | null;
         hasSubmittedCleaning: boolean;
+        hasSubmittedRequirements: boolean;
+        cleaningSubmission: Submission | null;
+        requirementsSubmission: Submission | null;
         requirements: string[];
-        assignedCompany: CompanyAssignmentItem | null;
       }>('/submissions/current');
 
-      setSubmission(data.submission);
+      setIsEventStarted(!!data.isEventStarted);
       setCleaningDataset(data.cleaningDataset || null);
       setHasSubmittedCleaning(!!data.hasSubmittedCleaning);
-      setRequirements(data.requirements || []);
-      setAssignedCompany(data.assignedCompany || null);
+      setHasSubmittedRequirements(!!data.hasSubmittedRequirements);
+      setCleaningSubmission(data.cleaningSubmission || null);
+      setRequirementsSubmission(data.requirementsSubmission || null);
+      setRequirementsList(data.requirements || []);
 
-      if (data.submission && data.submission.payload) {
-        const p = data.submission.payload;
-        if (activeStage === 'cleaning') {
-          setFormCleaning({
-            cleanedDatasetUrl: p.cleanedDatasetUrl || '',
-            cleaningSummary: p.cleaningSummary || '',
-            cleaningNotes: p.cleaningNotes || '',
+      // 1. Populate Cleaning Form (backend submitted / draft, or local draft if uncommitted)
+      const cleanSub = data.cleaningSubmission;
+      const cleanLocked = !!cleanSub?.isLocked;
+      const localCleanKey = `synapse_draft_cleaning_${teamId}`;
+      const localCleanDraft = localStorage.getItem(localCleanKey);
+
+      if (cleanLocked && cleanSub?.payload) {
+        setFormCleaning({
+          cleanedDatasetUrl: cleanSub.payload.cleanedDatasetUrl || '',
+          cleaningSummary: cleanSub.payload.cleaningSummary || '',
+          cleaningNotes: cleanSub.payload.cleaningNotes || '',
+        });
+        localStorage.removeItem(localCleanKey);
+      } else if (localCleanDraft) {
+        try {
+          const parsed = JSON.parse(localCleanDraft);
+          setFormCleaning(parsed);
+        } catch {
+          if (cleanSub?.payload) {
+            setFormCleaning({
+              cleanedDatasetUrl: cleanSub.payload.cleanedDatasetUrl || '',
+              cleaningSummary: cleanSub.payload.cleaningSummary || '',
+              cleaningNotes: cleanSub.payload.cleaningNotes || '',
+            });
+          }
+        }
+      } else if (cleanSub?.payload) {
+        setFormCleaning({
+          cleanedDatasetUrl: cleanSub.payload.cleanedDatasetUrl || '',
+          cleaningSummary: cleanSub.payload.cleaningSummary || '',
+          cleaningNotes: cleanSub.payload.cleaningNotes || '',
+        });
+      }
+
+      // 2. Populate Requirements Form
+      const reqSub = data.requirementsSubmission;
+      const reqLocked = !!reqSub?.isLocked;
+      const localReqKey = `synapse_draft_requirements_${teamId}`;
+      const localReqDraft = localStorage.getItem(localReqKey);
+
+      const titles = data.requirements || [];
+      const initReqRows = (existing: any[] = []) =>
+        titles.map((title) => {
+          const matched = existing.find((r: any) => r.title === title);
+          return {
+            title,
+            response: matched?.response || '',
+            link: matched?.link || '',
+            notes: matched?.notes || '',
+          };
+        });
+
+      if (reqLocked && reqSub?.payload) {
+        const payloadReqs = Array.isArray(reqSub.payload.requirements) ? reqSub.payload.requirements : [];
+        setFormRequirements({
+          companyName: reqSub.payload.companyName || '',
+          methodologySummary: reqSub.payload.methodologySummary || '',
+          requirements: initReqRows(payloadReqs),
+          generalNotes: reqSub.payload.generalNotes || '',
+        });
+        localStorage.removeItem(localReqKey);
+      } else if (localReqDraft) {
+        try {
+          const parsed = JSON.parse(localReqDraft);
+          setFormRequirements({
+            companyName: parsed.companyName || '',
+            methodologySummary: parsed.methodologySummary || '',
+            requirements: initReqRows(parsed.requirements || []),
+            generalNotes: parsed.generalNotes || '',
           });
-        } else if (activeStage === 'model-training') {
-          setFormModel({
-            companyName: p.companyName || '',
-            approachDescription: p.approachDescription || '',
-            accuracyResults: String(p.accuracyResults || ''),
-            githubUrl: p.githubUrl || '',
-          });
-        } else if (activeStage === 'final-submission') {
-          setFormFinal({
-            title: p.title || '',
-            productDescription: p.productDescription || '',
-            sourceUrl: p.sourceUrl || '',
-          });
+        } catch {
+          if (reqSub?.payload?.requirements) {
+            setFormRequirements({
+              companyName: reqSub.payload.companyName || '',
+              methodologySummary: reqSub.payload.methodologySummary || '',
+              requirements: initReqRows(reqSub.payload.requirements),
+              generalNotes: reqSub.payload.generalNotes || '',
+            });
+          } else {
+            setFormRequirements({
+              companyName: '',
+              methodologySummary: '',
+              requirements: initReqRows([]),
+              generalNotes: '',
+            });
+          }
+        }
+      } else if (reqSub?.payload?.requirements) {
+        setFormRequirements({
+          companyName: reqSub.payload.companyName || '',
+          methodologySummary: reqSub.payload.methodologySummary || '',
+          requirements: initReqRows(reqSub.payload.requirements),
+          generalNotes: reqSub.payload.generalNotes || '',
+        });
+      } else {
+        setFormRequirements({
+          companyName: '',
+          methodologySummary: '',
+          requirements: initReqRows([]),
+          generalNotes: '',
+        });
+      }
+
+      // 3. Restore last previewed section from localStorage
+      const savedSection = localStorage.getItem(`synapse_preview_section_${teamId}`) as
+        | 'cleaning'
+        | 'requirements'
+        | 'leaderboard'
+        | null;
+
+      if (savedSection) {
+        // Validate that savedSection is accessible
+        if (savedSection === 'leaderboard' && data.hasSubmittedRequirements) {
+          setActiveSection('leaderboard');
+        } else if (savedSection === 'requirements' && data.hasSubmittedCleaning) {
+          setActiveSection('requirements');
+        } else if (savedSection === 'cleaning') {
+          setActiveSection('cleaning');
+        } else if (data.hasSubmittedRequirements) {
+          setActiveSection('leaderboard');
+        } else if (data.hasSubmittedCleaning) {
+          setActiveSection('requirements');
+        } else {
+          setActiveSection('cleaning');
+        }
+      } else {
+        // Default to latest unlocked
+        if (data.hasSubmittedRequirements) {
+          setActiveSection('leaderboard');
+        } else if (data.hasSubmittedCleaning) {
+          setActiveSection('requirements');
+        } else {
+          setActiveSection('cleaning');
         }
       }
     } catch (err: any) {
       console.error('[TeamPortal] Error loading team data:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+    }
+  };
+
+  // Initial load
+  useEffect(() => {
+    loadTeamData();
+  }, []);
+
+  // Polling for event start if not yet started
+  useEffect(() => {
+    if (!isEventStarted) {
+      const timer = setInterval(() => {
+        loadTeamData(true);
+      }, 8000);
+      return () => clearInterval(timer);
+    }
+  }, [isEventStarted]);
+
+  // Load Leaderboard when leaderboard section is active
+  const loadLeaderboard = async () => {
+    setLeaderboardLoading(true);
+    try {
+      const res = await api.get<{
+        leaderboard: {
+          entries: LeaderboardEntry[];
+        };
+      }>('/leaderboard/live');
+      if (res.leaderboard && res.leaderboard.entries) {
+        setLeaderboard(res.leaderboard.entries);
+      }
+    } catch (err) {
+      console.error('[TeamPortal] Error fetching leaderboard:', err);
+    } finally {
+      setLeaderboardLoading(false);
     }
   };
 
   useEffect(() => {
-    loadTeamData();
-  }, [activeStage]);
+    if (activeSection === 'leaderboard' || hasSubmittedRequirements) {
+      loadLeaderboard();
+    }
+  }, [activeSection, hasSubmittedRequirements]);
 
+  // Handle section switch & persist in localStorage
+  const handleSelectSection = (sec: 'cleaning' | 'requirements' | 'leaderboard') => {
+    setActiveSection(sec);
+    if (teamId) {
+      localStorage.setItem(`synapse_preview_section_${teamId}`, sec);
+    }
+  };
+
+  // Autosave Cleaning Form to localStorage
+  const handleCleaningChange = (field: keyof typeof formCleaning, value: string) => {
+    const updated = { ...formCleaning, [field]: value };
+    setFormCleaning(updated);
+    if (teamId && !cleaningSubmission?.isLocked) {
+      localStorage.setItem(`synapse_draft_cleaning_${teamId}`, JSON.stringify(updated));
+    }
+  };
+
+  // Autosave Requirements Form to localStorage
+  const handleReqItemChange = (index: number, field: string, value: string) => {
+    const updatedReqs = [...formRequirements.requirements];
+    if (updatedReqs[index]) {
+      updatedReqs[index] = { ...updatedReqs[index], [field]: value };
+      const updated = { ...formRequirements, requirements: updatedReqs };
+      setFormRequirements(updated);
+      if (teamId && !requirementsSubmission?.isLocked) {
+        localStorage.setItem(`synapse_draft_requirements_${teamId}`, JSON.stringify(updated));
+      }
+    }
+  };
+
+  const handleReqGeneralNotesChange = (value: string) => {
+    const updated = { ...formRequirements, generalNotes: value };
+    setFormRequirements(updated);
+    if (teamId && !requirementsSubmission?.isLocked) {
+      localStorage.setItem(`synapse_draft_requirements_${teamId}`, JSON.stringify(updated));
+    }
+  };
+
+  const handleReqFieldChange = (
+    field: 'companyName' | 'methodologySummary' | 'generalNotes',
+    value: string
+  ) => {
+    const updated = { ...formRequirements, [field]: value };
+    setFormRequirements(updated);
+    if (teamId && !requirementsSubmission?.isLocked) {
+      localStorage.setItem(`synapse_draft_requirements_${teamId}`, JSON.stringify(updated));
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Draft & Submission Handlers
+  // -------------------------------------------------------------
+  const handleSaveCleaningDraft = async () => {
+    setSaving(true);
+    setNotice(null);
+    try {
+      const res = await api.put<{ submission: Submission }>('/submissions/draft', {
+        stage: 'cleaning',
+        payload: formCleaning,
+      });
+      setCleaningSubmission(res.submission);
+      setNotice({ type: 'success', message: 'Cleaning draft saved successfully.' });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to save cleaning draft.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSubmitCleaning = async () => {
+    setCleanSubmitError(null);
+    if (!formCleaning.cleanedDatasetUrl.trim()) {
+      setCleanSubmitError('Please enter a valid Cleaned Dataset URL.');
+      return;
+    }
+    try {
+      new URL(formCleaning.cleanedDatasetUrl.trim());
+    } catch {
+      setCleanSubmitError('The Cleaned Dataset URL must be a valid web link (e.g. https://drive.google.com/...).');
+      return;
+    }
+    if (!formCleaning.cleaningSummary.trim() || formCleaning.cleaningSummary.trim().length < 5) {
+      setCleanSubmitError('Please provide a summary of your cleaning steps (at least 5 characters).');
+      return;
+    }
+    if (!formCleaning.cleaningNotes.trim() || formCleaning.cleaningNotes.trim().length < 5) {
+      setCleanSubmitError('Please provide technical notes and libraries used (at least 5 characters).');
+      return;
+    }
+
+    setSubmitting(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ submission: Submission }>('/submissions/submit', {
+        stage: 'cleaning',
+        payload: formCleaning,
+      });
+      setCleaningSubmission(res.submission);
+      setHasSubmittedCleaning(true);
+      setConfirmCleanModal(false);
+      setCleanSubmitError(null);
+      localStorage.removeItem(`synapse_draft_cleaning_${teamId}`);
+      setNotice({
+        type: 'success',
+        message: 'Cleaning dataset and methodology submitted successfully! Step 2 unlocked.',
+      });
+      // Advance to requirements section
+      handleSelectSection('requirements');
+      await loadTeamData(true);
+    } catch (err: any) {
+      setCleanSubmitError(err.message || 'Submission failed. Please check your inputs and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSaveRequirementsDraft = async () => {
+    setSaving(true);
+    setNotice(null);
+    try {
+      const res = await api.put<{ submission: Submission }>('/submissions/draft', {
+        stage: 'requirements',
+        payload: formRequirements,
+      });
+      setRequirementsSubmission(res.submission);
+      setNotice({ type: 'success', message: 'Requirements draft saved successfully.' });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to save requirements draft.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSubmitRequirements = async () => {
+    setReqSubmitError(null);
+    if (!formRequirements.companyName.trim() || formRequirements.companyName.trim().length < 2) {
+      setReqSubmitError('Please enter your target Company / Organization name.');
+      return;
+    }
+    if (!formRequirements.methodologySummary.trim() || formRequirements.methodologySummary.trim().length < 5) {
+      setReqSubmitError('Please describe your overall solution methodology (at least 5 characters).');
+      return;
+    }
+
+    // Validate that each requirement has at least 5 characters response
+    for (let i = 0; i < formRequirements.requirements.length; i++) {
+      const item = formRequirements.requirements[i];
+      if (!item.response.trim() || item.response.trim().length < 5) {
+        setReqSubmitError(`Please provide a methodology description for "${item.title || `Requirement #${i + 1}`}" (at least 5 characters).`);
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ submission: Submission }>('/submissions/submit', {
+        stage: 'requirements',
+        payload: formRequirements,
+      });
+      setRequirementsSubmission(res.submission);
+      setHasSubmittedRequirements(true);
+      setConfirmReqModal(false);
+      setReqSubmitError(null);
+      localStorage.removeItem(`synapse_draft_requirements_${teamId}`);
+      setNotice({
+        type: 'success',
+        message: 'All requirements submitted and finalized! Leaderboard unlocked.',
+      });
+      // Advance to leaderboard section
+      handleSelectSection('leaderboard');
+      await loadTeamData(true);
+      await loadLeaderboard();
+    } catch (err: any) {
+      setReqSubmitError(err.message || 'Submission failed. Please check your inputs and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Guards & Checks
+  // -------------------------------------------------------------
   if (!user) {
     return (
       <EmptyState
@@ -126,57 +483,20 @@ export const TeamPortal: React.FC = () => {
     return (
       <EmptyState
         title="No Team Linked"
-        description={`Your account (${user.email}) is not linked to a registered team.`}
+        description={`Your account (${user.email}) is not linked to a registered team. Contact staff if you believe this is an error.`}
       />
     );
   }
 
-  const isLocked = !!submission?.isLocked;
-  const canEdit = isLeader && !isLocked && !team.disqualified && !participant?.restricted;
-
-  const handleSaveDraft = async () => {
-    setSaving(true);
-    setNotice(null);
-    try {
-      let payload: any = {};
-      if (activeStage === 'cleaning') payload = formCleaning;
-      else if (activeStage === 'model-training') payload = formModel;
-      else if (activeStage === 'final-submission') payload = formFinal;
-
-      const res = await api.put<{ submission: Submission }>('/submissions/draft', { payload });
-      setSubmission(res.submission);
-      setNotice({ type: 'success', message: 'Draft saved successfully.' });
-    } catch (err: any) {
-      setNotice({ type: 'error', message: err.message || 'Failed to save draft.' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleFinalSubmit = async () => {
-    setSubmitting(true);
-    setNotice(null);
-    try {
-      let payload: any = {};
-      if (activeStage === 'cleaning') payload = formCleaning;
-      else if (activeStage === 'model-training') payload = formModel;
-      else if (activeStage === 'final-submission') payload = formFinal;
-
-      const res = await api.post<{ submission: Submission }>('/submissions/submit', { payload });
-      setSubmission(res.submission);
-      setConfirmSubmitModal(false);
-      setNotice({ type: 'success', message: 'Submitted successfully.' });
-      await loadTeamData();
-    } catch (err: any) {
-      setNotice({ type: 'error', message: err.message || 'Submission failed validation.' });
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const isCleaningLocked = !!cleaningSubmission?.isLocked;
+  const isReqLocked = !!requirementsSubmission?.isLocked;
+  const canEditCleaning = isLeader && !isCleaningLocked && !team.disqualified && !participant?.restricted;
+  const canEditRequirements =
+    isLeader && hasSubmittedCleaning && !isReqLocked && !team.disqualified && !participant?.restricted;
 
   return (
     <div className="space-y-6">
-      {/* Team Header Banner */}
+      {/* Team Header */}
       <div className="bg-white rounded-lg border border-mist p-6 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -191,19 +511,29 @@ export const TeamPortal: React.FC = () => {
               )}
             </div>
             <p className="text-xs text-ink-muted">
-              {user.name} ({user.email})
+              {user.name} ({user.email}) &bull; {team.members?.length || 0} Registered Members
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            {isLocked ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-mist text-ink text-xs font-semibold border border-mist-dark">
-                <CheckCircle2 className="w-3.5 h-3.5 text-signal" />
-                Submitted
+            {!isEventStarted ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-amber-50 text-amber-800 text-xs font-semibold border border-amber-200">
+                <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                Waiting for Admin Launch
+              </span>
+            ) : hasSubmittedRequirements ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                All Submissions Completed
+              </span>
+            ) : hasSubmittedCleaning ? (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-50 text-blue-800 text-xs font-semibold border border-blue-200">
+                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                Requirements In Progress
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200">
-                Active
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-signal-light/40 text-signal text-xs font-semibold border border-signal/20">
+                Cleaning Active
               </span>
             )}
           </div>
@@ -228,407 +558,649 @@ export const TeamPortal: React.FC = () => {
         </Alert>
       )}
 
-      {/* Grid: Roster & Materials */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Team Members List */}
-        <Card title="Team Roster" subtitle={`${team.members?.length || 0} members`}>
-          <div className="divide-y divide-mist">
-            {team.members?.map((m: any) => {
-              const isThisMemberLeader =
-                team.leaderId === m._id ||
-                (typeof team.leaderId === 'object' && team.leaderId !== null && (team.leaderId as any)._id === m._id);
-              const isCurrent = m.email?.toLowerCase() === user.email.toLowerCase();
-
-              return (
-                <div key={m._id} className="py-2.5 flex items-center justify-between text-xs">
-                  <div>
-                    <div className="font-medium text-ink flex items-center gap-1.5">
-                      <span>{m.firstName} {m.lastName || ''}</span>
-                      {isCurrent && <span className="text-[10px] text-signal font-bold">(You)</span>}
-                    </div>
-                    <div className="text-[11px] text-ink-muted">{m.email} &bull; {m.college}</div>
-                  </div>
-                  <div>
-                    {isThisMemberLeader ? (
-                      <Badge variant="saffron" size="sm">Leader</Badge>
-                    ) : (
-                      <Badge variant="mist" size="sm">Member</Badge>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+      {/* EVENT NOT STARTED WAITING STATE */}
+      {!isEventStarted && (
+        <div className="bg-white rounded-lg border border-mist p-10 text-center space-y-4 shadow-sm">
+          <div className="w-16 h-16 rounded-full bg-amber-50 border border-amber-200 text-amber-600 mx-auto flex items-center justify-center">
+            <Clock className="w-8 h-8" />
           </div>
-        </Card>
-
-        {/* Challenge Resources */}
-        <div className="lg:col-span-2">
-          <Card title="Challenge Materials">
-            {activeStage === 'registration' ? (
-              <div className="p-4 bg-paper rounded border border-mist text-xs text-ink-muted">
-                The challenge dataset will become available here once the cleaning challenge begins.
-              </div>
-            ) : cleaningDataset && cleaningDataset.fileUrl ? (
-              <div className="p-4 bg-paper rounded border border-mist space-y-3">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h4 className="text-sm font-bold text-ink">{cleaningDataset.title || 'Uniform Cleaning Dataset'}</h4>
-                    {cleaningDataset.description && (
-                      <p className="text-xs text-ink-muted mt-1 leading-relaxed">
-                        {cleaningDataset.description}
-                      </p>
-                    )}
-                  </div>
-                  <a
-                    href={cleaningDataset.fileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-signal text-white text-xs font-semibold hover:bg-signal-hover transition-colors flex-shrink-0"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download Dataset
-                  </a>
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-ink-muted py-4">
-                Materials will be provided as each challenge commences.
-              </p>
-            )}
-          </Card>
+          <div className="max-w-md mx-auto">
+            <h3 className="text-xl font-serif font-bold text-ink">Competition Has Not Started</h3>
+            <p className="text-xs text-ink-muted mt-2 leading-relaxed">
+              The administrators have not officially launched the event yet. The challenge dataset and submission
+              interfaces will unlock automatically once the event begins.
+            </p>
+          </div>
+          <div className="pt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={loading}
+              icon={<RotateCw className="w-3.5 h-3.5" />}
+              onClick={() => loadTeamData(false)}
+            >
+              Check Launch Status
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Post-Cleaning Revealed Requirements */}
-      {(hasSubmittedCleaning || isLocked || activeStage === 'model-training' || activeStage === 'final-submission') &&
-        requirements.length > 0 && (
-          <Card
-            title="Requirement Tracks"
-            subtitle="The 5 specialized vertical tracks unlocked for your team"
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {requirements.map((reqTitle, idx) => (
-                <div key={idx} className="p-4 bg-paper rounded-lg border border-mist">
-                  <div className="text-[11px] font-bold text-signal uppercase tracking-wider mb-1">
-                    Track #{idx + 1}
+      {/* EVENT STARTED: SEQUENTIAL STAGE WORKSPACE */}
+      {isEventStarted && (
+        <div className="space-y-6">
+          {/* Sequential Step Navigation Bar */}
+          <div className="bg-white rounded-lg border border-mist p-2 flex items-center justify-between gap-2 overflow-x-auto no-scrollbar shadow-sm">
+            {/* Step 1 Pill */}
+            <button
+              onClick={() => handleSelectSection('cleaning')}
+              className={`flex-1 min-w-[200px] flex items-center gap-3 p-3 rounded-md text-left transition-all ${
+                activeSection === 'cleaning'
+                  ? 'bg-ink text-white shadow-sm'
+                  : 'hover:bg-paper text-ink'
+              }`}
+            >
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                  hasSubmittedCleaning
+                    ? 'bg-emerald-600 text-white'
+                    : activeSection === 'cleaning'
+                    ? 'bg-signal text-white'
+                    : 'bg-mist text-ink-muted'
+                }`}
+              >
+                {hasSubmittedCleaning ? <CheckCircle2 className="w-4 h-4" /> : '1'}
+              </div>
+              <div>
+                <div className="text-xs font-bold leading-tight">Dataset Cleaning</div>
+                <div
+                  className={`text-[11px] ${
+                    activeSection === 'cleaning' ? 'text-gray-300' : 'text-ink-muted'
+                  }`}
+                >
+                  {hasSubmittedCleaning ? 'Submitted & Locked' : 'Dataset & Techniques'}
+                </div>
+              </div>
+            </button>
+
+            {/* Step 2 Pill */}
+            <button
+              disabled={!hasSubmittedCleaning}
+              onClick={() => handleSelectSection('requirements')}
+              className={`flex-1 min-w-[200px] flex items-center gap-3 p-3 rounded-md text-left transition-all ${
+                !hasSubmittedCleaning
+                  ? 'opacity-50 cursor-not-allowed text-ink-muted'
+                  : activeSection === 'requirements'
+                  ? 'bg-ink text-white shadow-sm'
+                  : 'hover:bg-paper text-ink'
+              }`}
+            >
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                  hasSubmittedRequirements
+                    ? 'bg-emerald-600 text-white'
+                    : hasSubmittedCleaning
+                    ? activeSection === 'requirements'
+                      ? 'bg-signal text-white'
+                      : 'bg-mist-dark text-ink'
+                    : 'bg-mist text-ink-muted'
+                }`}
+              >
+                {hasSubmittedRequirements ? (
+                  <CheckCircle2 className="w-4 h-4" />
+                ) : !hasSubmittedCleaning ? (
+                  <Lock className="w-3.5 h-3.5" />
+                ) : (
+                  '2'
+                )}
+              </div>
+              <div>
+                <div className="text-xs font-bold leading-tight">The 5 Requirements</div>
+                <div
+                  className={`text-[11px] ${
+                    activeSection === 'requirements' ? 'text-gray-300' : 'text-ink-muted'
+                  }`}
+                >
+                  {!hasSubmittedCleaning
+                    ? 'Locked until Step 1 submitted'
+                    : hasSubmittedRequirements
+                    ? 'Submitted & Locked'
+                    : 'Configured tracks'}
+                </div>
+              </div>
+            </button>
+
+            {/* Step 3 Pill */}
+            <button
+              disabled={!hasSubmittedRequirements}
+              onClick={() => handleSelectSection('leaderboard')}
+              className={`flex-1 min-w-[200px] flex items-center gap-3 p-3 rounded-md text-left transition-all ${
+                !hasSubmittedRequirements
+                  ? 'opacity-50 cursor-not-allowed text-ink-muted'
+                  : activeSection === 'leaderboard'
+                  ? 'bg-ink text-white shadow-sm'
+                  : 'hover:bg-paper text-ink'
+              }`}
+            >
+              <div
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                  hasSubmittedRequirements
+                    ? activeSection === 'leaderboard'
+                      ? 'bg-signal text-white'
+                      : 'bg-mist-dark text-ink'
+                    : 'bg-mist text-ink-muted'
+                }`}
+              >
+                {!hasSubmittedRequirements ? <Lock className="w-3.5 h-3.5" /> : <Award className="w-4 h-4" />}
+              </div>
+              <div>
+                <div className="text-xs font-bold leading-tight">Live Leaderboard</div>
+                <div
+                  className={`text-[11px] ${
+                    activeSection === 'leaderboard' ? 'text-gray-300' : 'text-ink-muted'
+                  }`}
+                >
+                  {!hasSubmittedRequirements ? 'Locked until Step 2 submitted' : 'Team Standings & Scores'}
+                </div>
+              </div>
+            </button>
+          </div>
+
+          {/* ========================================================= */}
+          {/* SECTION 1: DATASET CLEANING & SUBMISSION */}
+          {/* ========================================================= */}
+          {activeSection === 'cleaning' && (
+            <div className="space-y-6">
+              {/* Raw Dataset Download Card */}
+              {cleaningDataset && cleaningDataset.fileUrl ? (
+                <div className="bg-white rounded-lg border border-mist p-6 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="text-[11px] font-bold text-signal uppercase tracking-wider mb-1">
+                        Official Challenge Dataset
+                      </div>
+                      <h3 className="text-lg font-serif font-bold text-ink">{cleaningDataset.title}</h3>
+                      {cleaningDataset.description && (
+                        <p className="text-xs text-ink-muted mt-1 leading-relaxed max-w-2xl">
+                          {cleaningDataset.description}
+                        </p>
+                      )}
+                    </div>
+                    <a
+                      href={cleaningDataset.fileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md bg-signal text-white text-xs font-semibold hover:bg-signal-hover transition-colors shadow-sm flex-shrink-0"
+                    >
+                      <Download className="w-4 h-4" />
+                      Download Raw Dataset
+                    </a>
                   </div>
-                  <h4 className="text-sm font-semibold text-ink leading-snug">{reqTitle}</h4>
                 </div>
-              ))}
-            </div>
-          </Card>
-        )}
-
-      {/* Current Challenge Form */}
-      {activeStage === 'registration' && (
-        <Card title="Registration Confirmed">
-          <div className="p-4 bg-paper rounded text-xs text-ink leading-relaxed">
-            Your team registration is verified. Submissions will open when the cleaning challenge starts.
-          </div>
-        </Card>
-      )}
-
-      {activeStage === 'cleaning' && (
-        <Card
-          title="Data Cleaning Submission"
-          subtitle="Submit your cleaned dataset link and transformation techniques"
-        >
-          {isLocked && (
-            <div className="p-3 bg-mist-light rounded border border-mist mb-6 flex items-center justify-between text-xs">
-              <span className="text-ink">
-                Submitted on {new Date(submission?.submittedAt || '').toLocaleString()}.
-              </span>
-              <Badge variant="signal">Submitted</Badge>
-            </div>
-          )}
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                Cleaned Dataset URL *
-              </label>
-              <input
-                type="url"
-                disabled={!canEdit}
-                value={formCleaning.cleanedDatasetUrl}
-                onChange={(e) => setFormCleaning({ ...formCleaning, cleanedDatasetUrl: e.target.value })}
-                placeholder="https://drive.google.com/... or https://storage.googleapis.com/..."
-                className="input-field text-xs"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                Summary of Cleaning Steps *
-              </label>
-              <textarea
-                rows={3}
-                disabled={!canEdit}
-                value={formCleaning.cleaningSummary}
-                onChange={(e) => setFormCleaning({ ...formCleaning, cleaningSummary: e.target.value })}
-                placeholder="Key anomaly corrections, outlier handling, and imputation steps."
-                className="input-field text-xs"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                Technical Notes & Libraries Used *
-              </label>
-              <textarea
-                rows={4}
-                disabled={!canEdit}
-                value={formCleaning.cleaningNotes}
-                onChange={(e) => setFormCleaning({ ...formCleaning, cleaningNotes: e.target.value })}
-                placeholder="Libraries, feature scaling, and normalization steps."
-                className="input-field font-mono text-xs"
-              />
-            </div>
-
-            {canEdit && (
-              <div className="pt-4 border-t border-mist flex items-center justify-end gap-3">
-                <Button
-                  variant="secondary"
-                  loading={saving}
-                  icon={<Save className="w-4 h-4" />}
-                  onClick={handleSaveDraft}
-                >
-                  Save Draft
-                </Button>
-                <Button
-                  variant="primary"
-                  loading={submitting}
-                  icon={<Send className="w-4 h-4" />}
-                  onClick={() => setConfirmSubmitModal(true)}
-                >
-                  Submit
-                </Button>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {activeStage === 'cleaning-leaderboard' && (
-        <Card title="Cleaning Results" subtitle="Evaluation underway">
-          <div className="p-4 bg-paper rounded text-xs text-ink leading-relaxed">
-            Cleaning submissions are under review. Visit the{' '}
-            <a href="/leaderboard" className="text-signal font-semibold underline">
-              Leaderboard
-            </a>{' '}
-            to view published scores.
-          </div>
-        </Card>
-      )}
-
-      {activeStage === 'model-training' && (
-        <Card
-          title="Model Training Submission"
-          subtitle="Model architecture, validation metric, and repository"
-        >
-          {isLocked && (
-            <div className="p-3 bg-mist-light rounded border border-mist mb-6 flex items-center justify-between text-xs">
-              <span className="text-ink">
-                Submitted on {new Date(submission?.submittedAt || '').toLocaleString()}.
-              </span>
-              <Badge variant="signal">Submitted</Badge>
-            </div>
-          )}
-
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                  Track Title *
-                </label>
-                <input
-                  type="text"
-                  disabled={!canEdit}
-                  value={formModel.companyName}
-                  onChange={(e) => setFormModel({ ...formModel, companyName: e.target.value })}
-                  placeholder="Select or enter your challenge track"
-                  className="input-field text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                  Validation Accuracy / Metric *
-                </label>
-                <input
-                  type="text"
-                  disabled={!canEdit}
-                  value={formModel.accuracyResults}
-                  onChange={(e) => setFormModel({ ...formModel, accuracyResults: e.target.value })}
-                  placeholder="e.g. 96.8% F1-Score"
-                  className="input-field text-xs"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                GitHub Repository URL *
-              </label>
-              <div className="relative">
-                <input
-                  type="url"
-                  disabled={!canEdit}
-                  value={formModel.githubUrl}
-                  onChange={(e) => setFormModel({ ...formModel, githubUrl: e.target.value })}
-                  placeholder="https://github.com/your-team/synapse-2026-solution"
-                  className="input-field pl-9 text-xs"
-                />
-                <Github className="w-4 h-4 text-ink-muted absolute left-3 top-2.5" />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                Approach Description *
-              </label>
-              <textarea
-                rows={4}
-                disabled={!canEdit}
-                value={formModel.approachDescription}
-                onChange={(e) => setFormModel({ ...formModel, approachDescription: e.target.value })}
-                placeholder="Model architecture, hyperparameter selection, and evaluation pipeline."
-                className="input-field text-xs"
-              />
-            </div>
-
-            {canEdit && (
-              <div className="pt-4 border-t border-mist flex items-center justify-end gap-3">
-                <Button
-                  variant="secondary"
-                  loading={saving}
-                  icon={<Save className="w-4 h-4" />}
-                  onClick={handleSaveDraft}
-                >
-                  Save Draft
-                </Button>
-                <Button
-                  variant="primary"
-                  loading={submitting}
-                  icon={<Send className="w-4 h-4" />}
-                  onClick={() => setConfirmSubmitModal(true)}
-                >
-                  Submit
-                </Button>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {(activeStage === 'ranking' || activeStage === 'final-submission') && (
-        <Card
-          title="Organization Placement & Final Deliverable"
-          subtitle="Final solution deliverable"
-        >
-          {assignedCompany && (
-            <div className="p-4 bg-signal-light/50 rounded-lg border border-signal/20 mb-6 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-signal text-white flex items-center justify-center">
-                  <Building className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="text-xs font-semibold text-signal uppercase tracking-wider">
-                    Assigned Organization
-                  </div>
-                  <h3 className="text-lg font-bold text-ink">{assignedCompany.companyName}</h3>
-                </div>
-              </div>
-              <Badge variant="signal">Assigned</Badge>
-            </div>
-          )}
-
-          {activeStage === 'final-submission' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                  Product Title *
-                </label>
-                <input
-                  type="text"
-                  disabled={!canEdit}
-                  value={formFinal.title}
-                  onChange={(e) => setFormFinal({ ...formFinal, title: e.target.value })}
-                  placeholder="e.g. Adaptive Predictive Engine"
-                  className="input-field text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                  Product Description *
-                </label>
-                <textarea
-                  rows={4}
-                  disabled={!canEdit}
-                  value={formFinal.productDescription}
-                  onChange={(e) => setFormFinal({ ...formFinal, productDescription: e.target.value })}
-                  placeholder="Solution overview and impact for the assigned organization."
-                  className="input-field text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                  Project or Source Link *
-                </label>
-                <input
-                  type="url"
-                  disabled={!canEdit}
-                  value={formFinal.sourceUrl}
-                  onChange={(e) => setFormFinal({ ...formFinal, sourceUrl: e.target.value })}
-                  placeholder="https://github.com/... or https://demo.app"
-                  className="input-field text-xs"
-                />
-              </div>
-
-              {canEdit && (
-                <div className="pt-4 border-t border-mist flex items-center justify-end gap-3">
-                  <Button
-                    variant="secondary"
-                    loading={saving}
-                    icon={<Save className="w-4 h-4" />}
-                    onClick={handleSaveDraft}
-                  >
-                    Save Draft
-                  </Button>
-                  <Button
-                    variant="primary"
-                    loading={submitting}
-                    icon={<Send className="w-4 h-4" />}
-                    onClick={() => setConfirmSubmitModal(true)}
-                  >
-                    Submit
-                  </Button>
+              ) : (
+                <div className="p-4 bg-paper rounded border border-mist text-xs text-ink-muted">
+                  Dataset files will be provisioned by administrators shortly.
                 </div>
               )}
+
+              {/* Cleaning Submission Form */}
+              <Card
+                title="Cleaned Dataset & Transformation Methodology"
+                subtitle="Submit your cleaned dataset link and transformation summary"
+              >
+                {isCleaningLocked && (
+                  <div className="p-3 bg-mist-light rounded border border-mist mb-6 flex items-center justify-between text-xs">
+                    <span className="text-ink">
+                      Submitted on{' '}
+                      <strong>
+                        {cleaningSubmission?.submittedAt
+                          ? new Date(cleaningSubmission.submittedAt).toLocaleString()
+                          : 'Recorded'}
+                      </strong>{' '}
+                      &bull; <span className="text-emerald-700 font-semibold">Records are immutable</span>
+                    </span>
+                    <Badge variant="signal">Submitted & Locked</Badge>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink uppercase mb-1">
+                      Cleaned Dataset URL *
+                    </label>
+                    <input
+                      type="url"
+                      disabled={!canEditCleaning}
+                      value={formCleaning.cleanedDatasetUrl}
+                      onChange={(e) => handleCleaningChange('cleanedDatasetUrl', e.target.value)}
+                      placeholder="https://drive.google.com/... or https://storage.googleapis.com/..."
+                      className="input-field text-xs"
+                    />
+                    <p className="text-[11px] text-ink-muted mt-1">
+                      Provide a publicly accessible or downloadable URL for evaluators.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink uppercase mb-1">
+                      Summary of Cleaning Steps *
+                    </label>
+                    <textarea
+                      rows={3}
+                      disabled={!canEditCleaning}
+                      value={formCleaning.cleaningSummary}
+                      onChange={(e) => handleCleaningChange('cleaningSummary', e.target.value)}
+                      placeholder="Summarize missing value imputation, outlier detection, coordinate normalization, etc."
+                      className="input-field text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink uppercase mb-1">
+                      Technical Notes, Libraries & Answers *
+                    </label>
+                    <textarea
+                      rows={4}
+                      disabled={!canEditCleaning}
+                      value={formCleaning.cleaningNotes}
+                      onChange={(e) => handleCleaningChange('cleaningNotes', e.target.value)}
+                      placeholder="Libraries (e.g. pandas, polars), algorithms applied, and methodology details."
+                      className="input-field font-mono text-xs"
+                    />
+                  </div>
+
+                  {canEditCleaning && (
+                    <div className="pt-4 border-t border-mist flex items-center justify-end gap-3">
+                      <Button
+                        variant="secondary"
+                        loading={saving}
+                        icon={<Save className="w-4 h-4" />}
+                        onClick={handleSaveCleaningDraft}
+                      >
+                        Save Draft
+                      </Button>
+                      <Button
+                        variant="primary"
+                        loading={submitting}
+                        icon={<Send className="w-4 h-4" />}
+                        onClick={() => {
+                          setCleanSubmitError(null);
+                          setConfirmCleanModal(true);
+                        }}
+                      >
+                        Submit Cleaning Phase
+                      </Button>
+                    </div>
+                  )}
+
+                  {!isLeader && !isCleaningLocked && (
+                    <p className="text-xs text-ink-muted italic text-right">
+                      Only the team leader can save drafts and finalize the submission.
+                    </p>
+                  )}
+                </div>
+              </Card>
             </div>
           )}
-        </Card>
+
+          {/* ========================================================= */}
+          {/* SECTION 2: THE FIVE REQUIREMENTS */}
+          {/* ========================================================= */}
+          {activeSection === 'requirements' && (
+            <div className="space-y-6">
+              <Card
+                title="The Five Requirements"
+                subtitle="Configured specialized tracks unlocked following dataset cleaning"
+              >
+                {isReqLocked && (
+                  <div className="p-3 bg-mist-light rounded border border-mist mb-6 flex items-center justify-between text-xs">
+                    <span className="text-ink">
+                      Submitted on{' '}
+                      <strong>
+                        {requirementsSubmission?.submittedAt
+                          ? new Date(requirementsSubmission.submittedAt).toLocaleString()
+                          : 'Recorded'}
+                      </strong>{' '}
+                      &bull; <span className="text-emerald-700 font-semibold">Records are immutable</span>
+                    </span>
+                    <Badge variant="signal">Submitted & Locked</Badge>
+                  </div>
+                )}
+
+                <div className="space-y-6">
+                  {/* Company Name & Overall Methodology */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-paper/40 rounded-lg border border-mist">
+                    <div>
+                      <label className="block text-xs font-semibold text-ink uppercase mb-1">
+                        Company / Organization Name *
+                      </label>
+                      <input
+                        type="text"
+                        disabled={!canEditRequirements}
+                        value={formRequirements.companyName}
+                        onChange={(e) => handleReqFieldChange('companyName', e.target.value)}
+                        placeholder="e.g. SpaceX, Tesla, Novacorp Labs, HealthAI"
+                        className="input-field text-xs"
+                      />
+                      <p className="text-[11px] text-ink-muted mt-1">
+                        Name of the company or industry problem your feature set addresses.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-ink uppercase mb-1">
+                        Overall Solution Methodology *
+                      </label>
+                      <textarea
+                        rows={2}
+                        disabled={!canEditRequirements}
+                        value={formRequirements.methodologySummary}
+                        onChange={(e) => handleReqFieldChange('methodologySummary', e.target.value)}
+                        placeholder="High-level architecture, algorithms, and models deployed."
+                        className="input-field text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {formRequirements.requirements.map((reqItem, idx) => (
+                    <div key={idx} className="p-4 bg-paper/60 rounded-lg border border-mist space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] font-bold text-signal uppercase tracking-wider">
+                          Requirement #{idx + 1}
+                        </div>
+                        {reqItem.response.trim().length >= 5 && (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold">
+                            <CheckCircle2 className="w-3 h-3" /> Ready
+                          </span>
+                        )}
+                      </div>
+
+                      <h4 className="text-sm font-serif font-bold text-ink">{reqItem.title}</h4>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                          Response / Solution Description *
+                        </label>
+                        <textarea
+                          rows={3}
+                          disabled={!canEditRequirements}
+                          value={reqItem.response}
+                          onChange={(e) => handleReqItemChange(idx, 'response', e.target.value)}
+                          placeholder={`Explain your methodology, architecture, and results for ${reqItem.title}`}
+                          className="input-field text-xs"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                            Source / Deliverable Link (Optional)
+                          </label>
+                          <input
+                            type="url"
+                            disabled={!canEditRequirements}
+                            value={reqItem.link}
+                            onChange={(e) => handleReqItemChange(idx, 'link', e.target.value)}
+                            placeholder="https://github.com/... or https://drive.google.com/..."
+                            className="input-field text-xs"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                            Additional Notes (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            disabled={!canEditRequirements}
+                            value={reqItem.notes}
+                            onChange={(e) => handleReqItemChange(idx, 'notes', e.target.value)}
+                            placeholder="Validation metrics, dependencies, or trade-offs"
+                            className="input-field text-xs"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  <div>
+                    <label className="block text-xs font-semibold text-ink uppercase mb-1">
+                      General Project Overview & Repository Notes
+                    </label>
+                    <textarea
+                      rows={3}
+                      disabled={!canEditRequirements}
+                      value={formRequirements.generalNotes}
+                      onChange={(e) => handleReqGeneralNotesChange(e.target.value)}
+                      placeholder="Overall project summary, shared dependencies, or instructions for evaluators."
+                      className="input-field text-xs"
+                    />
+                  </div>
+
+                  {canEditRequirements && (
+                    <div className="pt-4 border-t border-mist flex items-center justify-end gap-3">
+                      <Button
+                        variant="secondary"
+                        loading={saving}
+                        icon={<Save className="w-4 h-4" />}
+                        onClick={handleSaveRequirementsDraft}
+                      >
+                        Save Draft
+                      </Button>
+                      <Button
+                        variant="primary"
+                        loading={submitting}
+                        icon={<Send className="w-4 h-4" />}
+                        onClick={() => {
+                          setReqSubmitError(null);
+                          setConfirmReqModal(true);
+                        }}
+                      >
+                        Submit All Requirements
+                      </Button>
+                    </div>
+                  )}
+
+                  {!isLeader && !isReqLocked && (
+                    <p className="text-xs text-ink-muted italic text-right">
+                      Only the team leader can save drafts and finalize the submission.
+                    </p>
+                  )}
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 3: LIVE LEADERBOARD */}
+          {/* ========================================================= */}
+          {activeSection === 'leaderboard' && (
+            <Card
+              title="Official Competition Leaderboard"
+              subtitle="Current team standings and score calculations (Default score 0 for pending evaluations)"
+            >
+              <div className="flex items-center justify-end pb-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  loading={leaderboardLoading}
+                  icon={<RotateCw className="w-3.5 h-3.5" />}
+                  onClick={loadLeaderboard}
+                >
+                  Refresh Standings
+                </Button>
+              </div>
+
+              {leaderboard.length === 0 ? (
+                <div className="p-8 text-center text-xs text-ink-muted">
+                  No registered teams found on leaderboard.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="table-header w-16 text-center">Rank</th>
+                        <th className="table-header">Team Name</th>
+                        <th className="table-header">College / Institution</th>
+                        <th className="table-header">Status</th>
+                        <th className="table-header text-right">Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {leaderboard.map((entry) => {
+                        const isMyTeam = entry.teamId === teamId;
+                        return (
+                          <tr
+                            key={entry.teamId}
+                            className={`border-b border-mist transition-colors ${
+                              isMyTeam ? 'bg-signal/5 font-semibold' : 'hover:bg-paper/40'
+                            }`}
+                          >
+                            <td className="table-cell font-bold text-center">
+                              {entry.rank === 1 ? (
+                                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-saffron text-ink text-xs font-bold shadow-sm">
+                                  1
+                                </span>
+                              ) : entry.rank === 2 ? (
+                                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-ink text-xs font-bold shadow-sm">
+                                  2
+                                </span>
+                              ) : entry.rank === 3 ? (
+                                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-600/30 text-ink text-xs font-bold shadow-sm">
+                                  3
+                                </span>
+                              ) : (
+                                <span className="text-ink-muted">{entry.rank}</span>
+                              )}
+                            </td>
+                            <td className="table-cell">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-ink">{entry.teamName}</span>
+                                {isMyTeam && (
+                                  <span className="text-[10px] font-bold text-signal uppercase tracking-wider px-1.5 py-0.5 rounded bg-signal-light">
+                                    Your Team
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="table-cell text-xs text-ink-muted">
+                              {entry.college || 'Independent'}
+                            </td>
+                            <td className="table-cell text-xs">
+                              {entry.status === 'Requirements Submitted' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  <CheckCircle2 className="w-3 h-3" /> Completed
+                                </span>
+                              ) : entry.status === 'Cleaning Submitted' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-blue-800 border border-blue-200">
+                                  Cleaning Done
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-mist text-ink-muted">
+                                  In Progress
+                                </span>
+                              )}
+                            </td>
+                            <td className="table-cell text-right font-mono font-bold text-ink">
+                              {entry.score ?? 0} <span className="text-xs text-ink-muted font-normal">pts</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
       )}
 
-      {/* Confirmation Modal */}
+      {/* Confirmation Modal: Submit Cleaning */}
       <Modal
-        isOpen={confirmSubmitModal}
-        onClose={() => setConfirmSubmitModal(false)}
-        title="Confirm Submission"
+        isOpen={confirmCleanModal}
+        onClose={() => {
+          setCleanSubmitError(null);
+          setConfirmCleanModal(false);
+        }}
+        title="Confirm Dataset Cleaning Submission"
       >
         <div className="space-y-4 text-xs text-ink leading-relaxed">
+          {cleanSubmitError && (
+            <Alert type="error" title="Submission Issue">
+              {cleanSubmitError}
+            </Alert>
+          )}
+
           <p>
-            You are submitting on behalf of <strong>{team.teamName}</strong>. Please ensure all values and links are accurate before confirming.
+            You are submitting the cleaned dataset link and transformation summary on behalf of{' '}
+            <strong>{team.teamName}</strong>.
           </p>
+          <div className="p-3 bg-amber-50 text-amber-900 rounded border border-amber-200 text-[11px] space-y-1">
+            <p className="font-bold">Important Notice:</p>
+            <p>
+              Once submitted, your cleaning submission is locked and immutable. This will unlock the Five
+              Requirements tracks.
+            </p>
+          </div>
 
           <div className="pt-3 flex items-center justify-end gap-2 border-t border-mist">
-            <Button variant="secondary" onClick={() => setConfirmSubmitModal(false)}>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setCleanSubmitError(null);
+                setConfirmCleanModal(false);
+              }}
+            >
               Cancel
             </Button>
-            <Button variant="primary" loading={submitting} onClick={handleFinalSubmit}>
-              Submit
+            <Button variant="primary" loading={submitting} onClick={handleSubmitCleaning}>
+              Confirm & Submit
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Confirmation Modal: Submit Requirements */}
+      <Modal
+        isOpen={confirmReqModal}
+        onClose={() => {
+          setReqSubmitError(null);
+          setConfirmReqModal(false);
+        }}
+        title="Confirm Final Requirements Submission"
+      >
+        <div className="space-y-4 text-xs text-ink leading-relaxed">
+          {reqSubmitError && (
+            <Alert type="error" title="Submission Issue">
+              {reqSubmitError}
+            </Alert>
+          )}
+
+          <p>
+            You are submitting all responses for the Five Requirements on behalf of{' '}
+            <strong>{team.teamName}</strong>.
+          </p>
+          <div className="p-3 bg-red-50 text-red-900 rounded border border-red-200 text-[11px] space-y-1">
+            <p className="font-bold">Permanent Finalization:</p>
+            <p>
+              Once submitted, your entries are completely locked and cannot be edited. Evaluators will grade
+              your submissions and the official leaderboard will be updated.
+            </p>
+          </div>
+
+          <div className="pt-3 flex items-center justify-end gap-2 border-t border-mist">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setReqSubmitError(null);
+                setConfirmReqModal(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="primary" loading={submitting} onClick={handleSubmitRequirements}>
+              Confirm & Finalize
             </Button>
           </div>
         </div>

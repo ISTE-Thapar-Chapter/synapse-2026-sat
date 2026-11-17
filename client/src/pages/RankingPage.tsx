@@ -30,7 +30,7 @@ export const RankingPage: React.FC = () => {
 
       <Card
         title="Official Company Assignments"
-        subtitle="Deterministic round-robin assignment mapping top model performers to 5 partner organizations"
+        subtitle="Official partner organization assignments for participating teams"
         action={
           rankingData && (
             <div className="text-xs text-ink-muted flex items-center gap-1">

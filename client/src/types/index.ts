@@ -38,7 +38,7 @@ export interface Team {
 
 export interface Submission {
   _id: string;
-  stage: 'cleaning' | 'model-training' | 'final-submission';
+  stage: 'cleaning' | 'requirements' | 'model-training' | 'final-submission';
   teamId: string;
   status: 'draft' | 'submitted';
   payload: Record<string, any>;
@@ -80,7 +80,11 @@ export interface LeaderboardEntry {
   rank: number;
   teamId: string;
   teamName: string;
+  college?: string;
   score: number;
+  status?: string;
+  hasSubmittedCleaning?: boolean;
+  hasSubmittedRequirements?: boolean;
   accuracy?: any;
   submissionTime?: string;
   tieBreakReason?: string;
@@ -108,6 +112,8 @@ export interface AuditLogItem {
 
 export interface CompetitionConfig {
   _id: string;
+  isEventStarted?: boolean;
+  eventStartedAt?: string | null;
   cleaningDatasetTitle: string;
   cleaningDatasetUrl: string;
   cleaningDatasetDescription: string;

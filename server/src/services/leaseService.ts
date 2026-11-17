@@ -12,7 +12,7 @@ export class LeaseService {
    * If targetTeamId is not provided, finds the next available submission in the stage.
    */
   static async acquireLease(
-    stage: 'cleaning' | 'model-training',
+    stage: 'cleaning' | 'model-training' | 'requirements',
     evaluatorEmail: string,
     targetTeamId?: string
   ): Promise<{ success: boolean; evaluation?: IEvaluation; message?: string }> {

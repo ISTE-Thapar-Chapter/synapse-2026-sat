@@ -11,6 +11,7 @@ import { LeaderboardSnapshot } from '../models/LeaderboardSnapshot.js';
 import { CompanyAssignment } from '../models/CompanyAssignment.js';
 import { DatasetAssignment } from '../models/DatasetAssignment.js';
 import { CompetitionConfig } from '../models/CompetitionConfig.js';
+import { EventStage } from '../models/EventStage.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { ImportService } from '../services/importService.js';
 import { logAudit } from '../services/auditService.js';
@@ -47,25 +48,35 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
     const parsed = AccountCreateSchema.parse(req.body);
     const email = parsed.email.toLowerCase().trim();
 
-    const existing = await Account.findOne({ email });
-    if (existing) {
-      return res.status(400).json({ error: 'An account with this email already exists.' });
+    let account = await Account.findOne({ email });
+    let isNew = false;
+    if (account) {
+      account.name = parsed.name.trim();
+      account.role = parsed.role;
+      await account.save();
+    } else {
+      isNew = true;
+      account = new Account({
+        name: parsed.name.trim(),
+        email,
+        role: parsed.role,
+      });
+      await account.save();
     }
 
-    const account = new Account({
-      name: parsed.name.trim(),
-      email,
-      role: parsed.role,
-    });
-    await account.save();
+    await logAudit(
+      req.user!.email,
+      isNew ? 'ACCOUNT_CREATED' : 'ACCOUNT_ROLE_UPDATED',
+      'Account',
+      account._id.toString(),
+      {
+        name: account.name,
+        email: account.email,
+        role: account.role,
+      }
+    );
 
-    await logAudit(req.user!.email, 'ACCOUNT_CREATED', 'Account', account._id.toString(), {
-      name: account.name,
-      email: account.email,
-      role: account.role,
-    });
-
-    return res.status(201).json(account);
+    return res.status(isNew ? 201 : 200).json(account);
   } catch (err) {
     next(err);
   }
@@ -707,6 +718,59 @@ router.patch('/config', async (req: Request, res: Response, next: NextFunction) 
     });
 
     return res.json(config);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// -------------------------------------------------------------
+// Global Event Start / Pause Controls
+// -------------------------------------------------------------
+router.post('/event/start', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) {
+      config = new CompetitionConfig({});
+    }
+    config.isEventStarted = true;
+    config.eventStartedAt = new Date();
+    await config.save();
+
+    await EventStage.updateMany({}, { $set: { active: false } });
+    await EventStage.findOneAndUpdate(
+      { stageId: 'cleaning' },
+      { $set: { active: true, reason: 'Event officially started by admin', updatedBy: req.user!.email } },
+      { upsert: true }
+    );
+
+    await logAudit(req.user!.email, 'EVENT_STARTED', 'CompetitionConfig', config._id.toString(), {
+      startedAt: config.eventStartedAt,
+    });
+
+    return res.json({
+      message: 'Event successfully started.',
+      config,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/event/pause', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) {
+      config = new CompetitionConfig({});
+    }
+    config.isEventStarted = false;
+    await config.save();
+
+    await logAudit(req.user!.email, 'EVENT_PAUSED', 'CompetitionConfig', config._id.toString(), {});
+
+    return res.json({
+      message: 'Event paused.',
+      config,
+    });
   } catch (err) {
     next(err);
   }

@@ -10,7 +10,6 @@ import { Alert } from '../components/UI/Alert.js';
 import { Modal } from '../components/UI/Modal.js';
 import { EmptyState } from '../components/UI/EmptyState.js';
 import {
-  StageIdentifier,
   EvaluationTarget,
   Team,
   Participant,
@@ -37,7 +36,7 @@ import {
 
 export const StaffPortal: React.FC = () => {
   const { user } = useAuth();
-  const { activeStage, allStages, transitionStage } = useStage();
+  const { activeStage } = useStage();
   const navigate = useNavigate();
 
   // Role verification
@@ -50,8 +49,8 @@ export const StaffPortal: React.FC = () => {
   const isAdmin = user?.role === 'admin';
 
   const [activeTab, setActiveTab] = useState<
-    'evaluations' | 'stages' | 'config' | 'imports' | 'teams' | 'accounts' | 'leaderboard' | 'audit'
-  >(isAdmin ? 'stages' : 'evaluations');
+    'evaluations' | 'config' | 'imports' | 'teams' | 'accounts' | 'leaderboard' | 'audit'
+  >(isAdmin ? 'config' : 'evaluations');
 
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -69,10 +68,8 @@ export const StaffPortal: React.FC = () => {
   const [datasetDesc, setDatasetDesc] = useState('');
   const [reqTitles, setReqTitles] = useState<string[]>(['', '', '', '', '']);
 
-  // Admin states
-  const [transitionModal, setTransitionModal] = useState(false);
-  const [targetStage, setTargetStage] = useState<StageIdentifier>('cleaning');
-  const [transitionReason, setTransitionReason] = useState('');
+  // Event status control
+  const [eventLoading, setEventLoading] = useState(false);
 
   // Import state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -100,9 +97,22 @@ export const StaffPortal: React.FC = () => {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteTeamError, setDeleteTeamError] = useState<string | null>(null);
+
+  // Manual Account Creation
+  const [createAccountModal, setCreateAccountModal] = useState(false);
+  const [newAccountName, setNewAccountName] = useState('');
+  const [newAccountEmail, setNewAccountEmail] = useState('');
+  const [newAccountRole, setNewAccountRole] = useState<'admin' | 'evaluator' | 'public'>('evaluator');
+  const [createAccountLoading, setCreateAccountLoading] = useState(false);
+  const [createAccountError, setCreateAccountError] = useState<string | null>(null);
+
+  // Evaluation submission error
+  const [evalSubmitError, setEvalSubmitError] = useState<string | null>(null);
 
   // Accounts & Audit
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountSearch, setAccountSearch] = useState('');
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
 
   // Load Queue for Evaluator
@@ -176,12 +186,13 @@ export const StaffPortal: React.FC = () => {
     const evalId = activeTarget.evaluationId || (activeTarget as any)._id;
     if (!evalId) return;
 
+    setEvalSubmitError(null);
     if (score < 0 || score > 100) {
-      setNotice({ type: 'error', message: 'Score must be between 0 and 100.' });
+      setEvalSubmitError('Score must be between 0 and 100.');
       return;
     }
-    if (!feedback.trim()) {
-      setNotice({ type: 'error', message: 'Please provide feedback for this evaluation.' });
+    if (!feedback.trim() || feedback.trim().length < 5) {
+      setEvalSubmitError('Please provide evaluation feedback / remarks (at least 5 characters).');
       return;
     }
 
@@ -192,9 +203,10 @@ export const StaffPortal: React.FC = () => {
       setNotice({ type: 'success', message: 'Evaluation submitted successfully.' });
       setActiveTarget(null);
       setFeedback('');
+      setEvalSubmitError(null);
       await loadQueue();
     } catch (err: any) {
-      setNotice({ type: 'error', message: err.message || 'Failed to submit evaluation.' });
+      setEvalSubmitError(err.message || 'Failed to submit evaluation.');
     } finally {
       setLoading(false);
     }
@@ -233,23 +245,32 @@ export const StaffPortal: React.FC = () => {
     }
   };
 
-  // Admin: Transition Stage
-  const handleTransitionStage = async () => {
-    if (!transitionReason.trim()) {
-      setNotice({ type: 'error', message: 'A reason is required to change stages.' });
-      return;
-    }
-    setLoading(true);
+  // Admin: Start / Pause Global Event
+  const handleStartEvent = async () => {
+    setEventLoading(true);
     setNotice(null);
     try {
-      await transitionStage(targetStage, transitionReason, true);
-      setTransitionModal(false);
-      setTransitionReason('');
-      setNotice({ type: 'success', message: `Stage changed to '${targetStage}'.` });
+      const res = await api.post<{ message: string; config: CompetitionConfig }>('/admin/event/start');
+      setConfig(res.config);
+      setNotice({ type: 'success', message: 'Event successfully started! Participants can now view the dataset and submit responses.' });
     } catch (err: any) {
-      setNotice({ type: 'error', message: err.message || 'Transition failed.' });
+      setNotice({ type: 'error', message: err.message || 'Failed to start event.' });
     } finally {
-      setLoading(false);
+      setEventLoading(false);
+    }
+  };
+
+  const handlePauseEvent = async () => {
+    setEventLoading(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ message: string; config: CompetitionConfig }>('/admin/event/pause');
+      setConfig(res.config);
+      setNotice({ type: 'success', message: 'Event paused. Datasets and submissions are paused.' });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to pause event.' });
+    } finally {
+      setEventLoading(false);
     }
   };
 
@@ -404,7 +425,7 @@ export const StaffPortal: React.FC = () => {
   const handleDeleteTeam = async () => {
     if (!teamToDelete) return;
     setDeleteLoading(true);
-    setNotice(null);
+    setDeleteTeamError(null);
     try {
       const res = await api.delete<any>(`/admin/teams/${teamToDelete._id}`);
       setNotice({
@@ -423,13 +444,55 @@ export const StaffPortal: React.FC = () => {
 
       setDeleteModalOpen(false);
       setTeamToDelete(null);
+      setDeleteTeamError(null);
     } catch (err: any) {
-      setNotice({
-        type: 'error',
-        message: err.message || 'Failed to delete team.',
-      });
+      setDeleteTeamError(err.message || 'Failed to delete team.');
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  // Admin: Create Evaluator / Admin / Public Account
+  const handleCreateAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAccountName.trim() || !newAccountEmail.trim()) {
+      setCreateAccountError('Please provide both name and a valid email address.');
+      return;
+    }
+    setCreateAccountLoading(true);
+    setCreateAccountError(null);
+    try {
+      await api.post('/admin/accounts', {
+        name: newAccountName.trim(),
+        email: newAccountEmail.toLowerCase().trim(),
+        role: newAccountRole,
+      });
+      setCreateAccountModal(false);
+      setNewAccountName('');
+      setNewAccountEmail('');
+      setNewAccountRole('evaluator');
+      setNotice({
+        type: 'success',
+        message: `Account for ${newAccountEmail} provisioned successfully with role "${newAccountRole}".`,
+      });
+      const updated = await api.get<any[]>('/admin/accounts');
+      setAccounts(updated);
+    } catch (err: any) {
+      setCreateAccountError(err.message || 'Failed to provision account.');
+    } finally {
+      setCreateAccountLoading(false);
+    }
+  };
+
+  // Admin: Update Account Role
+  const handleUpdateRole = async (accountId: string, newRole: string) => {
+    try {
+      await api.patch(`/admin/accounts/${accountId}/role`, { role: newRole });
+      setNotice({ type: 'success', message: 'Account role updated successfully.' });
+      const updated = await api.get<any[]>('/admin/accounts');
+      setAccounts(updated);
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to update account role.' });
     }
   };
 
@@ -444,22 +507,48 @@ export const StaffPortal: React.FC = () => {
               <Badge variant={isAdmin ? 'signal' : 'saffron'}>{isAdmin ? 'Administrator' : 'Evaluator'}</Badge>
             </div>
             <p className="text-xs text-ink-muted">
-              {user.name} ({user.email}) &bull; Current Phase: <span className="font-semibold text-ink uppercase">{activeStage}</span>
+              {user.name} ({user.email}) &bull; Status:{' '}
+              {config?.isEventStarted ? (
+                <span className="font-semibold text-emerald-700">Event Live & Submissions Open</span>
+              ) : (
+                <span className="font-semibold text-amber-700">Event Not Started (Submissions Locked)</span>
+              )}
             </p>
           </div>
 
           {isAdmin && (
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Layers className="w-4 h-4" />}
-              onClick={() => {
-                setTargetStage(activeStage);
-                setTransitionModal(true);
-              }}
-            >
-              Advance / Change Phase
-            </Button>
+            <div className="flex items-center gap-3">
+              {config?.isEventStarted ? (
+                <>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Event Live
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={eventLoading}
+                    onClick={handlePauseEvent}
+                  >
+                    Pause Event
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-50 text-amber-800 text-xs font-semibold border border-amber-200">
+                    Not Started
+                  </span>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    loading={eventLoading}
+                    onClick={handleStartEvent}
+                  >
+                    Start Event
+                  </Button>
+                </>
+              )}
+            </div>
           )}
         </div>
 
@@ -470,13 +559,13 @@ export const StaffPortal: React.FC = () => {
       <div className="border-b border-mist flex gap-2 overflow-x-auto no-scrollbar">
         {isAdmin && (
           <button
-            onClick={() => setActiveTab('stages')}
+            onClick={() => setActiveTab('config')}
             className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-              activeTab === 'stages' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+              activeTab === 'config' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
             }`}
           >
-            <Layers className="w-4 h-4" />
-            <span>Phase Control</span>
+            <FileCode className="w-4 h-4" />
+            <span>Dataset & Requirements</span>
           </button>
         )}
 
@@ -493,24 +582,6 @@ export const StaffPortal: React.FC = () => {
         {isAdmin && (
           <>
             <button
-              onClick={() => setActiveTab('config')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                activeTab === 'config' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-              }`}
-            >
-              <FileCode className="w-4 h-4" />
-              <span>Dataset & Requirements</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('imports')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                activeTab === 'imports' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-              }`}
-            >
-              <Upload className="w-4 h-4" />
-              <span>Registration Import</span>
-            </button>
-            <button
               onClick={() => setActiveTab('teams')}
               className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
                 activeTab === 'teams' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
@@ -518,6 +589,15 @@ export const StaffPortal: React.FC = () => {
             >
               <Users className="w-4 h-4" />
               <span>Teams & Participants</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('accounts')}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                activeTab === 'accounts' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+              }`}
+            >
+              <Shield className="w-4 h-4" />
+              <span>Accounts & Roles</span>
             </button>
             <button
               onClick={() => setActiveTab('audit')}
@@ -547,11 +627,64 @@ export const StaffPortal: React.FC = () => {
               }
             >
               <div className="space-y-6">
-                <div className="p-4 bg-paper rounded-lg border border-mist space-y-3 text-xs">
-                  <div className="font-semibold text-ink uppercase">Submission Content</div>
-                  {activeTarget.payload?.cleanedDatasetUrl && (
+                <div className="p-4 bg-paper rounded-lg border border-mist space-y-4 text-xs">
+                  <div className="font-semibold text-ink uppercase tracking-wider text-[11px] border-b border-mist pb-2">
+                    Evaluation Target: Company Methodology & Feature Sets
+                  </div>
+
+                  {/* Company Name */}
+                  <div>
+                    <span className="font-bold text-ink">Target Company / Organization: </span>
+                    <span className="text-signal font-semibold">
+                      {activeTarget.payload?.companyName || 'Standard Solution Track'}
+                    </span>
+                  </div>
+
+                  {/* Overall Methodology */}
+                  {(activeTarget.payload?.methodologySummary || activeTarget.payload?.generalNotes) && (
                     <div>
-                      <span className="font-bold text-ink">Cleaned Dataset Link: </span>
+                      <span className="font-bold text-ink">Overall Methodology: </span>
+                      <p className="mt-1 text-ink bg-white p-2.5 rounded border border-mist leading-relaxed">
+                        {activeTarget.payload.methodologySummary || activeTarget.payload.generalNotes}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Respective Feature Sets */}
+                  {Array.isArray(activeTarget.payload?.requirements) && activeTarget.payload.requirements.length > 0 && (
+                    <div className="space-y-3 pt-1">
+                      <span className="font-bold text-ink uppercase tracking-wider text-[11px]">
+                        Respective Feature Sets ({activeTarget.payload.requirements.length})
+                      </span>
+                      <div className="space-y-2.5">
+                        {activeTarget.payload.requirements.map((req: any, idx: number) => (
+                          <div key={idx} className="p-3 bg-white rounded border border-mist space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-ink text-xs">{req.title || `Requirement #${idx + 1}`}</span>
+                              {req.link && (
+                                <a
+                                  href={req.link}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-signal underline text-[11px] inline-flex items-center gap-1"
+                                >
+                                  <span>Source / Code Link</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                            <p className="text-ink-muted leading-relaxed whitespace-pre-wrap">{req.response}</p>
+                            {req.notes && <div className="text-[11px] text-ink-muted italic">Notes: {req.notes}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Optional Cleaned Dataset Link if available */}
+                  {activeTarget.payload?.cleanedDatasetUrl && (
+                    <div className="pt-2 border-t border-mist text-[11px] text-ink-muted flex items-center gap-1.5">
+                      <span>Cleaned Dataset Reference:</span>
                       <a
                         href={activeTarget.payload.cleanedDatasetUrl}
                         target="_blank"
@@ -559,29 +692,7 @@ export const StaffPortal: React.FC = () => {
                         className="text-signal underline inline-flex items-center gap-1"
                       >
                         {activeTarget.payload.cleanedDatasetUrl}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  )}
-                  {activeTarget.payload?.cleaningSummary && (
-                    <div>
-                      <span className="font-bold text-ink">Methodology Summary: </span>
-                      <p className="mt-1 text-ink">{activeTarget.payload.cleaningSummary}</p>
-                    </div>
-                  )}
-                  {activeTarget.payload?.cleaningNotes && (
-                    <div>
-                      <span className="font-bold text-ink">Techniques & Code Notes: </span>
-                      <pre className="mt-1 p-2 bg-white rounded border border-mist-dark font-mono text-[11px] whitespace-pre-wrap">
-                        {activeTarget.payload.cleaningNotes}
-                      </pre>
-                    </div>
-                  )}
-                  {activeTarget.payload?.githubUrl && (
-                    <div>
-                      <span className="font-bold text-ink">GitHub Repository: </span>
-                      <a href={activeTarget.payload.githubUrl} target="_blank" rel="noopener noreferrer" className="text-signal underline">
-                        {activeTarget.payload.githubUrl}
+                        <ExternalLink className="w-2.5 h-2.5" />
                       </a>
                     </div>
                   )}
@@ -621,10 +732,16 @@ export const StaffPortal: React.FC = () => {
                       rows={3}
                       value={feedback}
                       onChange={(e) => setFeedback(e.target.value)}
-                      placeholder="Feedback on preprocessing quality, completeness, and documentation."
+                      placeholder="Feedback on methodology quality, feature set implementation, and technical validity."
                       className="input-field text-xs"
                     />
                   </div>
+
+                  {evalSubmitError && (
+                    <Alert type="error" title="Evaluation Error" className="mt-3">
+                      {evalSubmitError}
+                    </Alert>
+                  )}
 
                   <div className="pt-3 border-t border-mist flex justify-end">
                     <Button variant="primary" loading={loading} icon={<Send className="w-4 h-4" />} onClick={handleSubmitEvaluation}>
@@ -637,7 +754,7 @@ export const StaffPortal: React.FC = () => {
           )}
 
           {/* Teams Queue */}
-          <Card title="Submissions Queue" subtitle="Teams ready for evaluation">
+          <Card title="Submissions Queue" subtitle="Teams ready for evaluation based on submitted company methodologies">
             {targets.length === 0 ? (
               <div className="p-8 text-center text-xs text-ink-muted">No submissions in queue.</div>
             ) : (
@@ -646,6 +763,7 @@ export const StaffPortal: React.FC = () => {
                   <thead>
                     <tr>
                       <th className="table-header">Team Name</th>
+                      <th className="table-header">Company Target</th>
                       <th className="table-header">Submitted At</th>
                       <th className="table-header">Status</th>
                       <th className="table-header">Score</th>
@@ -656,6 +774,9 @@ export const StaffPortal: React.FC = () => {
                     {targets.map((t) => (
                       <tr key={t.teamId} className="hover:bg-paper/40">
                         <td className="table-cell font-semibold">{t.teamName}</td>
+                        <td className="table-cell text-xs text-ink font-medium">
+                          {t.payload?.companyName || 'Enterprise'}
+                        </td>
                         <td className="table-cell text-xs text-ink-muted">
                           {t.submittedAt ? new Date(t.submittedAt).toLocaleTimeString() : '—'}
                         </td>
@@ -691,8 +812,8 @@ export const StaffPortal: React.FC = () => {
       {/* Tab: Dataset & 5 Requirements Config */}
       {isAdmin && activeTab === 'config' && (
         <Card
-          title="Single Dataset & Requirement Tracks Setup"
-          subtitle="Configure the uniform cleaning dataset and the 5 challenge titles revealed after cleaning submission"
+          title="Challenge Materials & Requirements Setup"
+          subtitle="Configure the official challenge dataset and the 5 vertical challenge tracks"
           action={
             <Button variant="primary" size="sm" loading={loading} onClick={handleSaveConfig}>
               Save Configuration
@@ -763,33 +884,6 @@ export const StaffPortal: React.FC = () => {
         </Card>
       )}
 
-      {/* Tab: Stage Progression */}
-      {isAdmin && activeTab === 'stages' && (
-        <Card title="Current Event Phase" subtitle="Manage active stage across the platform">
-          <div className="p-6 bg-paper rounded border border-mist flex items-center justify-between">
-            <div>
-              <div className="text-xs font-semibold text-ink-muted uppercase">Active Phase</div>
-              <h3 className="text-2xl font-serif font-bold text-ink uppercase mt-1">{activeStage}</h3>
-              <p className="text-xs text-ink-muted mt-1">
-                {activeStage === 'registration'
-                  ? 'Registration active. Datasets are hidden from teams.'
-                  : activeStage === 'cleaning'
-                  ? 'Cleaning phase active. The uniform dataset is now visible to all teams.'
-                  : 'Competition progressing.'}
-              </p>
-            </div>
-            <Button
-              variant="primary"
-              onClick={() => {
-                setTargetStage(activeStage);
-                setTransitionModal(true);
-              }}
-            >
-              Advance / Change Phase
-            </Button>
-          </div>
-        </Card>
-      )}
 
       {/* Tab: Registration Ingest */}
       {isAdmin && activeTab === 'imports' && (
@@ -880,6 +974,7 @@ export const StaffPortal: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => {
+                            setDeleteTeamError(null);
                             setTeamToDelete(t);
                             setDeleteModalOpen(true);
                           }}
@@ -917,6 +1012,100 @@ export const StaffPortal: React.FC = () => {
         </div>
       )}
 
+      {/* Tab: Accounts & Roles Management */}
+      {isAdmin && activeTab === 'accounts' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative max-w-sm flex-1">
+              <input
+                type="text"
+                placeholder="Search accounts by name or email..."
+                value={accountSearch}
+                onChange={(e) => setAccountSearch(e.target.value)}
+                className="input-field pl-9 text-xs"
+              />
+              <Search className="w-4 h-4 text-ink-muted absolute left-3 top-2.5" />
+            </div>
+
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<UserPlus className="w-4 h-4" />}
+              onClick={() => {
+                setCreateAccountError(null);
+                setCreateAccountModal(true);
+              }}
+            >
+              Create Account
+            </Button>
+          </div>
+
+          <Card
+            title={`Accounts & Permissions (${accounts.length})`}
+            subtitle="Manage access roles for administrators, evaluators, and participants"
+          >
+            {accounts.length === 0 ? (
+              <div className="p-8 text-center text-xs text-ink-muted">No accounts registered.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="table-header">Full Name</th>
+                      <th className="table-header">Authorized Google Email</th>
+                      <th className="table-header">Current Role</th>
+                      <th className="table-header text-right">Change Role</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accounts
+                      .filter(
+                        (a) =>
+                          a.name?.toLowerCase().includes(accountSearch.toLowerCase()) ||
+                          a.email?.toLowerCase().includes(accountSearch.toLowerCase())
+                      )
+                      .map((acc) => (
+                        <tr key={acc._id} className="hover:bg-paper/40 border-b border-mist">
+                          <td className="table-cell font-semibold text-ink">{acc.name}</td>
+                          <td className="table-cell text-xs text-ink-muted font-mono">{acc.email}</td>
+                          <td className="table-cell">
+                            <Badge
+                              variant={
+                                acc.role === 'admin'
+                                  ? 'signal'
+                                  : acc.role === 'evaluator'
+                                  ? 'saffron'
+                                  : 'mist'
+                              }
+                            >
+                              {acc.role === 'admin'
+                                ? 'Administrator'
+                                : acc.role === 'evaluator'
+                                ? 'Evaluator'
+                                : 'Public Participant'}
+                            </Badge>
+                          </td>
+                          <td className="table-cell text-right">
+                            <select
+                              value={acc.role}
+                              onChange={(e) => handleUpdateRole(acc._id, e.target.value)}
+                              className="input-field text-xs py-1 px-2 w-36 inline-block"
+                            >
+                              <option value="evaluator">Evaluator</option>
+                              <option value="admin">Administrator</option>
+                              <option value="public">Public</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
       {/* Tab: Audit Log */}
       {isAdmin && activeTab === 'audit' && (
         <Card title="Audit History">
@@ -934,42 +1123,13 @@ export const StaffPortal: React.FC = () => {
         </Card>
       )}
 
-      {/* Phase Transition Modal */}
-      <Modal isOpen={transitionModal} onClose={() => setTransitionModal(false)} title="Change Competition Phase">
-        <div className="space-y-4 text-xs">
-          <div>
-            <label className="block font-semibold text-ink uppercase mb-1">Target Phase</label>
-            <select value={targetStage} onChange={(e) => setTargetStage(e.target.value as any)} className="input-field">
-              {allStages.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block font-semibold text-ink uppercase mb-1">Reason for Change *</label>
-            <textarea
-              rows={3}
-              value={transitionReason}
-              onChange={(e) => setTransitionReason(e.target.value)}
-              placeholder="e.g. Registration closed, opening cleaning phase."
-              className="input-field"
-            />
-          </div>
-
-          <div className="pt-3 flex justify-end gap-2 border-t border-mist">
-            <Button variant="secondary" onClick={() => setTransitionModal(false)}>Cancel</Button>
-            <Button variant="primary" loading={loading} onClick={handleTransitionStage}>Confirm Phase</Button>
-          </div>
-        </div>
-      </Modal>
 
       {/* Manual Team Creation Modal */}
       <Modal
         isOpen={createTeamModal}
         onClose={() => setCreateTeamModal(false)}
         title="Create Team Manually"
-        description="Specify the team name, leader details, and team member names & emails. Google OAuth accounts and team rosters will be created automatically."
+        description="Specify the team name, leader details, and team member names & emails. Team access accounts and member rosters will be created automatically."
         maxWidth="lg"
       >
         <form onSubmit={handleCreateTeamManually} className="space-y-4 text-xs">
@@ -1083,7 +1243,7 @@ export const StaffPortal: React.FC = () => {
               ))}
             </div>
             <p className="text-[11px] text-ink-muted mt-2">
-              Each member's email is registered as their Google OAuth identifier and added to this team's roster.
+              Each member's email will be authorized to access the team workspace and submissions.
             </p>
           </div>
 
@@ -1110,10 +1270,20 @@ export const StaffPortal: React.FC = () => {
       {/* Delete Team Confirmation Modal */}
       <Modal
         isOpen={deleteModalOpen}
-        onClose={() => setDeleteModalOpen(false)}
+        onClose={() => {
+          setDeleteTeamError(null);
+          setDeleteModalOpen(false);
+          setTeamToDelete(null);
+        }}
         title="Delete Team Permanently"
       >
         <div className="space-y-4 text-xs text-ink leading-relaxed">
+          {deleteTeamError && (
+            <Alert type="error" title="Delete Failed">
+              {deleteTeamError}
+            </Alert>
+          )}
+
           <p>
             Are you sure you want to delete <strong className="text-signal">{teamToDelete?.teamName}</strong>?
           </p>
@@ -1121,7 +1291,7 @@ export const StaffPortal: React.FC = () => {
             <p className="font-bold">This permanent action will remove:</p>
             <ul className="list-disc list-inside space-y-0.5 text-[11px]">
               <li>The team profile and leadership mapping</li>
-              <li>All participant records and their Google OAuth accounts</li>
+              <li>All participant records and associated account access</li>
               <li>All submissions across all competition rounds</li>
               <li>All evaluation scores and feedback</li>
               <li>Any published leaderboard snapshot entries</li>
@@ -1133,6 +1303,7 @@ export const StaffPortal: React.FC = () => {
               type="button"
               variant="secondary"
               onClick={() => {
+                setDeleteTeamError(null);
                 setDeleteModalOpen(false);
                 setTeamToDelete(null);
               }}
@@ -1150,6 +1321,82 @@ export const StaffPortal: React.FC = () => {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Create Account Modal */}
+      <Modal
+        isOpen={createAccountModal}
+        onClose={() => setCreateAccountModal(false)}
+        title="Create Evaluator or Admin Account"
+        description="Specify name, email, and select role. The user can immediately sign in via Google Auth with this email."
+      >
+        <form onSubmit={handleCreateAccount} className="space-y-4 text-xs">
+          {createAccountError && (
+            <Alert type="error" title="Error">
+              {createAccountError}
+            </Alert>
+          )}
+
+          <div>
+            <label className="block font-semibold text-ink uppercase mb-1">Full Name *</label>
+            <input
+              type="text"
+              required
+              value={newAccountName}
+              onChange={(e) => setNewAccountName(e.target.value)}
+              placeholder="e.g. Dr. Jane Smith"
+              className="input-field"
+            />
+          </div>
+
+          <div>
+            <label className="block font-semibold text-ink uppercase mb-1">
+              Google Email Address *
+            </label>
+            <input
+              type="email"
+              required
+              value={newAccountEmail}
+              onChange={(e) => setNewAccountEmail(e.target.value)}
+              placeholder="e.g. evaluator@university.edu or @gmail.com"
+              className="input-field"
+            />
+            <p className="text-[11px] text-ink-muted mt-1">
+              The user must use this Google email address to sign in.
+            </p>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-ink uppercase mb-1">Account Role *</label>
+            <select
+              value={newAccountRole}
+              onChange={(e) => setNewAccountRole(e.target.value as any)}
+              className="input-field"
+            >
+              <option value="evaluator">Evaluator (Evaluates team submissions and gives scores)</option>
+              <option value="admin">Administrator (Full portal, event control & team management)</option>
+              <option value="public">Public (Team participant / observer)</option>
+            </select>
+          </div>
+
+          <div className="pt-3 flex justify-end gap-2 border-t border-mist">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setCreateAccountModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={createAccountLoading}
+              icon={<UserPlus className="w-4 h-4" />}
+            >
+              Provision Account
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   );

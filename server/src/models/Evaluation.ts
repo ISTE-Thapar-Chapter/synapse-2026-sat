@@ -11,7 +11,7 @@ export interface IScoreCorrection {
 }
 
 export interface IEvaluation extends Document {
-  stage: 'cleaning' | 'model-training';
+  stage: 'cleaning' | 'model-training' | 'requirements';
   targetTeamId: Types.ObjectId;
   submissionId: Types.ObjectId;
   evaluatorEmail: string;
@@ -27,7 +27,7 @@ export interface IEvaluation extends Document {
 
 const EvaluationSchema = new Schema<IEvaluation>(
   {
-    stage: { type: String, enum: ['cleaning', 'model-training'], required: true, index: true },
+    stage: { type: String, enum: ['cleaning', 'model-training', 'requirements'], required: true, index: true },
     targetTeamId: { type: Schema.Types.ObjectId, ref: 'Team', required: true, index: true },
     submissionId: { type: Schema.Types.ObjectId, ref: 'Submission', required: true, index: true },
     evaluatorEmail: { type: String, required: true, lowercase: true, trim: true, index: true },

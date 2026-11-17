@@ -14,6 +14,20 @@ export const CleaningSubmissionSchema = z.object({
   answers: z.record(z.any()).optional().default({}),
 });
 
+export const RequirementAnswerSchema = z.object({
+  title: z.string().min(1, 'Requirement title is required'),
+  response: z.string().min(5, 'Requirement response / solution must be at least 5 characters'),
+  link: z.string().url('Must be a valid URL').optional().or(z.literal('')),
+  notes: z.string().optional().default(''),
+});
+
+export const RequirementsSubmissionSchema = z.object({
+  companyName: z.string().min(2, 'Company name is required').optional().default('Enterprise Solution'),
+  methodologySummary: z.string().optional().default(''),
+  requirements: z.array(RequirementAnswerSchema).min(1, 'At least one requirement submission is required'),
+  generalNotes: z.string().optional().default(''),
+});
+
 export const ModelTrainingSubmissionSchema = z.object({
   companyName: z.string().min(2, 'Company name is required'),
   approachDescription: z.string().min(10, 'Approach description must be at least 10 characters'),

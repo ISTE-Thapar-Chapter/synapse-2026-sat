@@ -11,6 +11,7 @@ import { Submission } from '../src/models/Submission.js';
 import { Evaluation } from '../src/models/Evaluation.js';
 import { LeaderboardSnapshot } from '../src/models/LeaderboardSnapshot.js';
 import { CompanyAssignment } from '../src/models/CompanyAssignment.js';
+import { CompetitionConfig } from '../src/models/CompetitionConfig.js';
 import { AuditLog } from '../src/models/AuditLog.js';
 import { signUserToken } from '../src/middleware/auth.js';
 import { LeaseService } from '../src/services/leaseService.js';
@@ -494,5 +495,293 @@ describe('8. Manual Team & User Account Provisioning and Team Deletion', () => {
     // 7. Verify Evaluations are deleted
     const evalCheck = await Evaluation.find({ targetTeamId: createdTeamId });
     expect(evalCheck.length).toBe(0);
+  });
+});
+
+describe('9. Sequential Stages: Event Start, Cleaning, 5 Requirements & Default 0 Leaderboard', () => {
+  let seqTeam: any;
+  let seqLeaderToken: string;
+
+  beforeAll(async () => {
+    // 1. Create a dedicated team for sequential testing
+    await Team.deleteMany({ teamName: 'Sequential Pioneers' });
+    await Participant.deleteMany({ email: 'seq.lead@pioneers.edu' });
+    await Account.deleteMany({ email: 'seq.lead@pioneers.edu' });
+
+    await Account.create({
+      name: 'Seq Leader',
+      email: 'seq.lead@pioneers.edu',
+      role: 'public',
+    });
+
+    const leadPart = await Participant.create({
+      firstName: 'Seq',
+      lastName: 'Leader',
+      email: 'seq.lead@pioneers.edu',
+      college: 'Pioneers Tech',
+      role: 'leader',
+      restricted: false,
+    });
+
+    seqTeam = await Team.create({
+      teamName: 'Sequential Pioneers',
+      leaderId: leadPart._id,
+      members: [leadPart._id],
+      disqualified: false,
+    });
+
+    leadPart.teamId = seqTeam._id;
+    await leadPart.save();
+
+    seqLeaderToken = signUserToken('seq.lead@pioneers.edu', 'Seq Leader');
+  });
+
+  it('hides raw dataset and blocks submissions when event is not started', async () => {
+    // Ensure event is not started
+    await CompetitionConfig.findOneAndUpdate(
+      {},
+      { isEventStarted: false, eventStartedAt: null },
+      { upsert: true }
+    );
+    await EventStage.updateMany({}, { $set: { active: false } });
+    await EventStage.findOneAndUpdate({ stageId: 'registration' }, { $set: { active: true } });
+
+    const curRes = await request(app)
+      .get('/api/submissions/current')
+      .set('Authorization', `Bearer ${seqLeaderToken}`);
+
+    expect(curRes.status).toBe(200);
+    expect(curRes.body.isEventStarted).toBe(false);
+    expect(curRes.body.cleaningDataset).toBeNull();
+
+    // Draft should be rejected
+    const draftRes = await request(app)
+      .put('/api/submissions/draft')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({ stage: 'cleaning', payload: { cleanedDatasetUrl: 'https://test.com' } });
+
+    expect(draftRes.status).toBe(400);
+    expect(draftRes.body.error).toBe('Event Not Started');
+  });
+
+  it('admin starts event, revealing dataset to participants', async () => {
+    const startRes = await request(app)
+      .post('/api/admin/event/start')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(startRes.status).toBe(200);
+    expect(startRes.body.message).toContain('Event successfully started');
+    expect(startRes.body.config.isEventStarted).toBe(true);
+
+    const curRes = await request(app)
+      .get('/api/submissions/current')
+      .set('Authorization', `Bearer ${seqLeaderToken}`);
+
+    expect(curRes.status).toBe(200);
+    expect(curRes.body.isEventStarted).toBe(true);
+    expect(curRes.body.cleaningDataset).not.toBeNull();
+    expect(curRes.body.cleaningDataset.title).toBeDefined();
+    expect(curRes.body.hasSubmittedCleaning).toBe(false);
+  });
+
+  it('allows leader to draft and submit cleaning phase, unlocking the 5 requirements', async () => {
+    // 1. Save cleaning draft
+    const draftRes = await request(app)
+      .put('/api/submissions/draft')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({
+        stage: 'cleaning',
+        payload: {
+          cleanedDatasetUrl: 'https://datasets.iste.org/seq-clean.csv',
+          cleaningSummary: 'Handled missing values and outlier normalization.',
+          cleaningNotes: 'Polars and Scikit-learn preprocessing.',
+        },
+      });
+
+    expect(draftRes.status).toBe(200);
+    expect(draftRes.body.submission.status).toBe('draft');
+
+    // 2. Submit cleaning phase
+    const submitRes = await request(app)
+      .post('/api/submissions/submit')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({
+        stage: 'cleaning',
+        cleanedDatasetUrl: 'https://datasets.iste.org/seq-clean.csv',
+        cleaningSummary: 'Handled missing values and outlier normalization.',
+        cleaningNotes: 'Polars and Scikit-learn preprocessing.',
+      });
+
+    expect(submitRes.status).toBe(200);
+    expect(submitRes.body.submission.isLocked).toBe(true);
+    expect(submitRes.body.submission.status).toBe('submitted');
+
+    // 3. Verify current endpoint now reveals the 5 requirements
+    const curRes = await request(app)
+      .get('/api/submissions/current')
+      .set('Authorization', `Bearer ${seqLeaderToken}`);
+
+    expect(curRes.status).toBe(200);
+    expect(curRes.body.hasSubmittedCleaning).toBe(true);
+    expect(curRes.body.requirements.length).toBe(5);
+    expect(curRes.body.hasSubmittedRequirements).toBe(false);
+  });
+
+  it('allows leader to draft and submit the 5 requirements, locking submission permanently', async () => {
+    // 1. Save requirements draft
+    const draftRes = await request(app)
+      .put('/api/submissions/draft')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({
+        stage: 'requirements',
+        payload: {
+          requirements: [
+            { title: 'Track 1: Climate Forecasting Architecture', response: 'LSTM recurrent neural net with attention.' },
+            { title: 'Track 2: Autonomous Trajectory Prediction', response: 'Kalman filtering combined with transformer.' },
+          ],
+          generalNotes: 'End to end pipeline with Docker container.',
+        },
+      });
+
+    expect(draftRes.status).toBe(200);
+    expect(draftRes.body.submission.status).toBe('draft');
+
+    // 2. Submit requirements
+    const submitRes = await request(app)
+      .post('/api/submissions/submit')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({
+        stage: 'requirements',
+        requirements: [
+          { title: 'Track 1: Climate Forecasting Architecture', response: 'LSTM recurrent neural net with attention.' },
+          { title: 'Track 2: Autonomous Trajectory Prediction', response: 'Kalman filtering combined with transformer.' },
+        ],
+        generalNotes: 'End to end pipeline with Docker container.',
+      });
+
+    expect(submitRes.status).toBe(200);
+    expect(submitRes.body.submission.isLocked).toBe(true);
+
+    // 3. Verify submission is immutable
+    const secondSubmitRes = await request(app)
+      .post('/api/submissions/submit')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({
+        stage: 'requirements',
+        requirements: [
+          { title: 'Track 1', response: 'Attempt to overwrite locked record.' },
+        ],
+      });
+
+    expect(secondSubmitRes.status).toBe(403);
+    expect(secondSubmitRes.body.error).toBe('Already Submitted');
+  });
+
+  it('calculates live leaderboard with 0 default score for teams awaiting evaluation', async () => {
+    const liveRes = await request(app).get('/api/leaderboard/live');
+
+    expect(liveRes.status).toBe(200);
+    expect(liveRes.body.leaderboard).toBeDefined();
+    expect(Array.isArray(liveRes.body.leaderboard.entries)).toBe(true);
+
+    const seqEntry = liveRes.body.leaderboard.entries.find(
+      (e: any) => e.teamName === 'Sequential Pioneers'
+    );
+    expect(seqEntry).toBeDefined();
+    // Default score 0 until evaluators grade
+    expect(seqEntry.score).toBe(0);
+    expect(seqEntry.status).toBe('Requirements Submitted');
+    expect(seqEntry.rank).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('10. Admin Account Provisioning & Feature Set Methodology Evaluation', () => {
+  let newEvaluatorEmail = 'new.eval@iste.org';
+  let newEvaluatorToken: string;
+
+  beforeAll(async () => {
+    await Account.deleteMany({ email: { $in: [newEvaluatorEmail, 'co.admin@iste.org'] } });
+  });
+
+  it('allows admin to provision evaluator account directly from portal', async () => {
+    const res = await request(app)
+      .post('/api/admin/accounts')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Dr. Evaluator Smith',
+        email: newEvaluatorEmail,
+        role: 'evaluator',
+      });
+
+    expect([200, 201]).toContain(res.status);
+    expect(res.body.email).toBe(newEvaluatorEmail);
+    expect(res.body.role).toBe('evaluator');
+
+    const acc = await Account.findOne({ email: newEvaluatorEmail });
+    expect(acc).toBeDefined();
+    expect(acc?.role).toBe('evaluator');
+
+    newEvaluatorToken = signUserToken(newEvaluatorEmail, 'Dr. Evaluator Smith');
+  });
+
+  it('allows admin to provision another admin account directly from portal', async () => {
+    const res = await request(app)
+      .post('/api/admin/accounts')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Co-Admin User',
+        email: 'co.admin@iste.org',
+        role: 'admin',
+      });
+
+    expect([200, 201]).toContain(res.status);
+    expect(res.body.role).toBe('admin');
+  });
+
+  it('evaluates team on the basis of company name and methodologies for feature sets', async () => {
+    // 1. Fetch queue for evaluator
+    const qRes = await request(app)
+      .get('/api/evaluations/queue')
+      .set('Authorization', `Bearer ${newEvaluatorToken}`);
+
+    expect(qRes.status).toBe(200);
+    expect(Array.isArray(qRes.body.targets)).toBe(true);
+
+    const seqTarget = qRes.body.targets.find((t: any) => t.teamName === 'Sequential Pioneers');
+    expect(seqTarget).toBeDefined();
+
+    // 2. Evaluator acquires lease
+    const acquireRes = await request(app)
+      .post('/api/evaluations/lease/acquire')
+      .set('Authorization', `Bearer ${newEvaluatorToken}`)
+      .send({ targetTeamId: seqTarget.teamId });
+
+    expect(acquireRes.status).toBe(200);
+    expect(acquireRes.body.evaluation).toBeDefined();
+
+    const evalId = acquireRes.body.evaluation._id;
+
+    // 3. Evaluator completes grading with score 94 based on feature set methodologies
+    const submitGradeRes = await request(app)
+      .post('/api/evaluations/submit')
+      .set('Authorization', `Bearer ${newEvaluatorToken}`)
+      .send({
+        evaluationId: evalId,
+        score: 94,
+        feedback: 'Outstanding architecture and deep methodology for both feature sets.',
+      });
+
+    expect(submitGradeRes.status).toBe(200);
+    expect(submitGradeRes.body.evaluation.score).toBe(94);
+    expect(submitGradeRes.body.evaluation.status).toBe('completed');
+
+    // 4. Verify leaderboard reflects the evaluated score (updated from default 0)
+    const liveLeaderboard = await request(app).get('/api/leaderboard/live');
+    expect(liveLeaderboard.status).toBe(200);
+    const updatedEntry = liveLeaderboard.body.leaderboard.entries.find(
+      (e: any) => e.teamName === 'Sequential Pioneers'
+    );
+    expect(updatedEntry).toBeDefined();
+    expect(updatedEntry.score).toBe(94);
   });
 });

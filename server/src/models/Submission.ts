@@ -8,12 +8,23 @@ export interface ISubmissionReopen {
   reopenedAt: Date;
 }
 
+export interface IRequirementAnswer {
+  title: string;
+  response: string;
+  link?: string;
+  notes?: string;
+}
+
 export interface ISubmissionPayload {
   // Cleaning round fields
   cleanedDatasetUrl?: string;
   cleaningNotes?: string;
   cleaningSummary?: string;
   answers?: Record<string, any>;
+
+  // Requirements fields
+  requirements?: IRequirementAnswer[];
+  generalNotes?: string;
 
   // Model training fields
   companyName?: string;
@@ -28,7 +39,7 @@ export interface ISubmissionPayload {
 }
 
 export interface ISubmission extends Document {
-  stage: 'cleaning' | 'model-training' | 'final-submission';
+  stage: 'cleaning' | 'requirements' | 'model-training' | 'final-submission';
   teamId: Types.ObjectId;
   status: SubmissionStatus;
   payload: ISubmissionPayload;
@@ -44,7 +55,7 @@ const SubmissionSchema = new Schema<ISubmission>(
   {
     stage: {
       type: String,
-      enum: ['cleaning', 'model-training', 'final-submission'],
+      enum: ['cleaning', 'requirements', 'model-training', 'final-submission'],
       required: true,
       index: true,
     },

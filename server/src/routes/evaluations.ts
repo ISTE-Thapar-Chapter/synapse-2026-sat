@@ -16,31 +16,27 @@ router.use(requireAuth, requireRole(['evaluator', 'admin']));
  */
 router.get('/queue', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const activeStage = await StageService.getActiveStage();
     const evaluatorEmail = req.user!.email;
+    const stageQuery = req.query.stage as string;
 
-    if (!['cleaning', 'model-training'].includes(activeStage)) {
-      return res.json({
-        activeStage,
-        targets: [],
-        message: `Evaluations are only active during 'cleaning' and 'model-training' stages. Current stage is '${activeStage}'.`,
-      });
-    }
+    // Evaluators evaluate teams when they submit their company names and feature set methodologies ('requirements')
+    const evalStage = stageQuery === 'cleaning' ? 'cleaning' : 'requirements';
 
     // 1. Eligible teams
     const eligibleTeams = await Team.find({ disqualified: false });
     const eligibleTeamIds = eligibleTeams.map((t) => t._id);
 
     // 2. Submissions submitted
+    const stageCondition = evalStage === 'requirements' ? { $in: ['requirements', 'model-training'] } : evalStage;
     const submissions = await Submission.find({
-      stage: activeStage as any,
+      stage: stageCondition as any,
       status: 'submitted',
       teamId: { $in: eligibleTeamIds },
-    }).populate('teamId', 'teamName disqualified');
+    }).populate('teamId', 'teamName college disqualified');
 
     // 3. Existing evaluations for this stage
     const evaluations = await Evaluation.find({
-      stage: activeStage as any,
+      stage: { $in: [evalStage, 'requirements', 'model-training'] },
       targetTeamId: { $in: eligibleTeamIds },
     });
 
@@ -70,6 +66,7 @@ router.get('/queue', async (req: Request, res: Response, next: NextFunction) => 
       return {
         teamId: (sub.teamId as any)._id,
         teamName: (sub.teamId as any).teamName,
+        college: (sub.teamId as any).college,
         submissionId: sub._id,
         submittedAt: sub.submittedAt,
         payload: sub.payload,
@@ -83,7 +80,7 @@ router.get('/queue', async (req: Request, res: Response, next: NextFunction) => 
     });
 
     return res.json({
-      activeStage,
+      activeStage: evalStage,
       evaluatorEmail,
       targets,
     });
@@ -97,16 +94,12 @@ router.get('/queue', async (req: Request, res: Response, next: NextFunction) => 
  */
 router.post('/lease/acquire', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const activeStage = await StageService.getActiveStage();
     const evaluatorEmail = req.user!.email;
-    const { targetTeamId } = req.body;
-
-    if (!['cleaning', 'model-training'].includes(activeStage)) {
-      return res.status(400).json({ error: 'Evaluations are not currently active.' });
-    }
+    const { targetTeamId, stage } = req.body;
+    const evalStage = stage === 'cleaning' ? 'cleaning' : 'requirements';
 
     const result = await LeaseService.acquireLease(
-      activeStage as 'cleaning' | 'model-training',
+      evalStage,
       evaluatorEmail,
       targetTeamId
     );
@@ -115,7 +108,10 @@ router.post('/lease/acquire', async (req: Request, res: Response, next: NextFunc
       return res.status(409).json({ error: result.message });
     }
 
-    const sub = await Submission.findOne({ stage: activeStage as any, teamId: result.evaluation!.targetTeamId });
+    const sub = await Submission.findOne({
+      stage: { $in: [evalStage, 'requirements', 'model-training'] },
+      teamId: result.evaluation!.targetTeamId,
+    });
 
     return res.json({
       message: 'Evaluator lease acquired successfully.',

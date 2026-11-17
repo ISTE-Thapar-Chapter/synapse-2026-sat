@@ -29,8 +29,8 @@ export const LeaderboardPage: React.FC = () => {
       </div>
 
       <Card
-        title="Official Cleaning Round Leaderboard"
-        subtitle="Immutable scores published by competition administrators"
+        title="Official Competition Leaderboard"
+        subtitle="Live standings and verified scores published by competition evaluators"
         action={
           leaderboard && (
             <div className="text-xs text-ink-muted flex items-center gap-1">
@@ -42,7 +42,7 @@ export const LeaderboardPage: React.FC = () => {
       >
         {!leaderboard || !leaderboard.entries || leaderboard.entries.length === 0 ? (
           <div className="p-8 text-center text-xs text-ink-muted">
-            The cleaning round leaderboard has not yet been published by administrators.
+            The competition leaderboard has not yet been published.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -52,8 +52,8 @@ export const LeaderboardPage: React.FC = () => {
                   <th className="table-header w-16">Rank</th>
                   <th className="table-header">Team Name</th>
                   <th className="table-header">Score</th>
-                  <th className="table-header">Tie-break Justification</th>
-                  <th className="table-header">Submission Timestamp</th>
+                  <th className="table-header">Tie-break Note</th>
+                  <th className="table-header">Submitted At</th>
                 </tr>
               </thead>
               <tbody>

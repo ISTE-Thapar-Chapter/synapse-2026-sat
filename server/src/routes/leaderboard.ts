@@ -6,13 +6,27 @@ import { LeaderboardPublishSchema } from '../schemas/validation.js';
 const router = Router();
 
 /**
+ * Public route to get live calculated leaderboard (scores default to 0 for un-evaluated teams)
+ */
+router.get('/live', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const live = await LeaderboardService.calculateLiveLeaderboard();
+    return res.json({
+      leaderboard: live,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Public route to get latest published cleaning leaderboard
  */
 router.get('/published', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const published = await LeaderboardService.getPublishedCleaningLeaderboard();
     return res.json({
-      published: !!published,
+      published: true,
       leaderboard: published,
     });
   } catch (err) {

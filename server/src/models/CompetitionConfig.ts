@@ -1,6 +1,8 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface ICompetitionConfig extends Document {
+  isEventStarted: boolean;
+  eventStartedAt: Date | null;
   cleaningDatasetTitle: string;
   cleaningDatasetUrl: string;
   cleaningDatasetDescription: string;
@@ -11,6 +13,14 @@ export interface ICompetitionConfig extends Document {
 
 const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
   {
+    isEventStarted: {
+      type: Boolean,
+      default: false,
+    },
+    eventStartedAt: {
+      type: Date,
+      default: null,
+    },
     cleaningDatasetTitle: {
       type: String,
       default: 'Satellite Multi-Spectral Sensor Dataset',

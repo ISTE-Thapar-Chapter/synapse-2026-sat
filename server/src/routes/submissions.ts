@@ -7,6 +7,7 @@ import { CompetitionConfig } from '../models/CompetitionConfig.js';
 import { logAudit } from '../services/auditService.js';
 import {
   CleaningSubmissionSchema,
+  RequirementsSubmissionSchema,
   ModelTrainingSubmissionSchema,
   FinalSubmissionSchema,
   ReopenSubmissionSchema,
@@ -17,46 +18,49 @@ router.use(requireAuth);
 
 /**
  * Get current team workspace context:
- * - Active stage
- * - Single dataset (ONLY visible if admin has started cleaning stage)
+ * - isEventStarted
+ * - Single dataset (ONLY visible if event is started)
  * - 5 Requirement titles (ONLY visible after cleaning submission is submitted)
+ * - Submissions for cleaning & requirements
  */
 router.get('/current', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const activeStage = await StageService.getActiveStage();
     const team = req.team;
 
+    let config = await CompetitionConfig.findOne();
+    if (!config) {
+      config = await CompetitionConfig.create({});
+    }
+
+    const isEventStarted = !!config.isEventStarted || activeStage !== 'registration';
+
     if (!team) {
       return res.json({
+        isEventStarted,
         activeStage,
         hasTeam: false,
         message: 'No team linked to your account.',
       });
     }
 
-    // Get competition config for single dataset and requirements
-    let config = await CompetitionConfig.findOne();
-    if (!config) {
-      config = await CompetitionConfig.create({});
-    }
-
-    // Submission for current active stage
-    const currentSubmission = await Submission.findOne({
-      stage: activeStage as any,
-      teamId: team._id,
-    });
-
-    // Check if cleaning round was submitted by this team
+    // Submissions
     const cleaningSubmission = await Submission.findOne({
       stage: 'cleaning',
       teamId: team._id,
-      status: 'submitted',
     });
 
-    // Single cleaning dataset: ONLY accessible if stage is cleaning or later
+    const requirementsSubmission = await Submission.findOne({
+      stage: { $in: ['requirements', 'model-training'] },
+      teamId: team._id,
+    });
+
+    const hasSubmittedCleaning = cleaningSubmission?.status === 'submitted';
+    const hasSubmittedRequirements = requirementsSubmission?.status === 'submitted';
+
+    // Single cleaning dataset: ONLY accessible if event is started
     let cleaningDataset = null;
-    const isCleaningOrLater = activeStage !== 'registration';
-    if (isCleaningOrLater) {
+    if (isEventStarted) {
       cleaningDataset = {
         title: config.cleaningDatasetTitle,
         fileUrl: config.cleaningDatasetUrl,
@@ -66,31 +70,33 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
 
     // 5 Requirement titles: ONLY revealed after cleaned dataset & techniques are submitted
     let requirements: string[] = [];
-    if (cleaningSubmission) {
+    if (hasSubmittedCleaning) {
       requirements = config.requirementTitles || [];
     }
 
-    // If final-submission / ranking, resolve assigned company
+    // Resolve assigned company if any
     let assignedCompany = null;
-    if (activeStage === 'final-submission' || activeStage === 'ranking') {
-      const companyRecord = await CompanyAssignment.findOne({ published: true });
-      if (companyRecord) {
-        assignedCompany = companyRecord.assignments.find(
-          (a) => a.teamId.toString() === team._id.toString()
-        );
-      }
+    const companyRecord = await CompanyAssignment.findOne({ published: true });
+    if (companyRecord) {
+      assignedCompany = companyRecord.assignments.find(
+        (a) => a.teamId.toString() === team._id.toString()
+      );
     }
 
     return res.json({
+      isEventStarted,
       activeStage,
       team,
       isLeader: req.isLeader,
       isDisqualified: team.disqualified,
       isRestricted: !!req.participant?.restricted,
-      submission: currentSubmission,
       cleaningDataset,
-      hasSubmittedCleaning: !!cleaningSubmission,
+      hasSubmittedCleaning,
+      hasSubmittedRequirements,
+      cleaningSubmission,
+      requirementsSubmission,
       requirements,
+      submission: !hasSubmittedCleaning ? cleaningSubmission : requirementsSubmission,
       assignedCompany,
     });
   } catch (err) {
@@ -103,15 +109,33 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
  */
 router.put('/draft', requireTeamLeader, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
     const activeStage = await StageService.getActiveStage();
-    if (!['cleaning', 'model-training', 'final-submission'].includes(activeStage)) {
-      return res.status(400).json({ error: `Submissions are not accepted during stage '${activeStage}'.` });
+    const isEventStarted = !!config.isEventStarted || activeStage !== 'registration';
+
+    if (!isEventStarted) {
+      return res.status(400).json({ error: 'Event Not Started', message: 'The event has not started yet.' });
     }
 
     const team = req.team!;
+    const requestedStage = req.body.stage || (req.body.payload?.requirements ? 'requirements' : 'cleaning');
+    const stage = requestedStage === 'requirements' ? 'requirements' : 'cleaning';
     const payload: ISubmissionPayload = req.body.payload || req.body;
 
-    let submission = await Submission.findOne({ stage: activeStage as any, teamId: team._id });
+    // Check pre-condition for requirements draft
+    if (stage === 'requirements') {
+      const cleanSub = await Submission.findOne({ stage: 'cleaning', teamId: team._id, status: 'submitted' });
+      if (!cleanSub) {
+        return res.status(400).json({
+          error: 'Prerequisite Required',
+          message: 'You must submit your cleaned dataset before editing the five requirements.',
+        });
+      }
+    }
+
+    let submission = await Submission.findOne({ stage, teamId: team._id });
     if (submission && submission.isLocked) {
       return res.status(403).json({
         error: 'Submission Locked',
@@ -121,7 +145,7 @@ router.put('/draft', requireTeamLeader, async (req: Request, res: Response, next
 
     if (!submission) {
       submission = new Submission({
-        stage: activeStage as any,
+        stage,
         teamId: team._id,
         status: 'draft',
         payload,
@@ -147,26 +171,38 @@ router.put('/draft', requireTeamLeader, async (req: Request, res: Response, next
  */
 router.post('/submit', requireTeamLeader, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
     const activeStage = await StageService.getActiveStage();
-    if (!['cleaning', 'model-training', 'final-submission'].includes(activeStage)) {
-      return res.status(400).json({ error: `Submissions are not accepted during stage '${activeStage}'.` });
+    const isEventStarted = !!config.isEventStarted || activeStage !== 'registration';
+
+    if (!isEventStarted) {
+      return res.status(400).json({ error: 'Event Not Started', message: 'The event has not started yet.' });
     }
 
     const team = req.team!;
     const rawPayload = req.body.payload || req.body;
+    const requestedStage = req.body.stage || (rawPayload.requirements ? 'requirements' : 'cleaning');
+    const stage = requestedStage === 'requirements' ? 'requirements' : 'cleaning';
 
     let validatedPayload: any;
-    if (activeStage === 'cleaning') {
+    if (stage === 'cleaning') {
       validatedPayload = CleaningSubmissionSchema.parse(rawPayload);
-    } else if (activeStage === 'model-training') {
-      validatedPayload = ModelTrainingSubmissionSchema.parse(rawPayload);
-    } else if (activeStage === 'final-submission') {
-      validatedPayload = FinalSubmissionSchema.parse(rawPayload);
+    } else if (stage === 'requirements') {
+      const cleanSub = await Submission.findOne({ stage: 'cleaning', teamId: team._id, status: 'submitted' });
+      if (!cleanSub) {
+        return res.status(400).json({
+          error: 'Prerequisite Required',
+          message: 'You must submit your cleaned dataset before submitting requirements.',
+        });
+      }
+      validatedPayload = RequirementsSubmissionSchema.parse(rawPayload);
     }
 
     const now = new Date();
     let submission = await Submission.findOne({
-      stage: activeStage as any,
+      stage,
       teamId: team._id,
     });
 
@@ -179,7 +215,7 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
 
     if (!submission) {
       submission = new Submission({
-        stage: activeStage as any,
+        stage,
         teamId: team._id,
       });
     }
@@ -197,7 +233,7 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
       'Submission',
       submission._id.toString(),
       {
-        stage: activeStage,
+        stage,
         teamId: team._id.toString(),
         teamName: team.teamName,
         submittedAt: now,

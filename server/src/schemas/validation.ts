@@ -56,10 +56,19 @@ export const AccountRoleUpdateSchema = z.object({
   role: z.enum(['public', 'evaluator', 'admin']),
 });
 
+export const TeamMemberInputSchema = z.object({
+  name: z.string().min(2, 'Member name is required'),
+  email: z.string().email('Valid member email is required'),
+});
+
 export const ManualTeamCreateSchema = z.object({
   teamName: z.string().min(2, 'Team name is required'),
-  leaderEmail: z.string().email('Leader email is required'),
-  memberEmails: z.array(z.string().email()).optional().default([]),
+  leaderName: z.string().min(2, 'Leader name is required'),
+  leaderEmail: z.string().email('Leader email must be a valid email address'),
+  members: z.array(TeamMemberInputSchema).optional().default([]),
+  participantEmails: z.array(z.string().email()).optional().default([]),
+  memberEmails: z.array(z.string().email()).optional(),
+  college: z.string().optional().default('Independent'),
   mentorName: z.string().optional(),
   mentorEmail: z.string().email().optional().or(z.literal('')),
 });

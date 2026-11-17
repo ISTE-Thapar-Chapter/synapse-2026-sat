@@ -359,3 +359,140 @@ describe('7. Model Training & Round-Robin Company Assignment', () => {
     expect(published.assignments.length).toBeGreaterThan(0);
   });
 });
+
+describe('8. Manual Team & User Account Provisioning and Team Deletion', () => {
+  let createdTeamId: string;
+
+  beforeAll(async () => {
+    // Clean up test team if left over
+    const oldTeam = await Team.findOne({ teamName: 'Quantum Enigma Squad' });
+    if (oldTeam) {
+      await Team.findByIdAndDelete(oldTeam._id);
+      await Participant.deleteMany({ email: { $in: ['jane.smith.lead@quantum.edu', 'bob.marley@quantum.edu', 'alice.cooper@quantum.edu'] } });
+      await Account.deleteMany({ email: { $in: ['jane.smith.lead@quantum.edu', 'bob.marley@quantum.edu', 'alice.cooper@quantum.edu'] } });
+      await Submission.deleteMany({ teamId: oldTeam._id });
+      await Evaluation.deleteMany({ targetTeamId: oldTeam._id });
+    }
+  });
+
+  it('creates team, leader account, and participant accounts with specified names', async () => {
+    const payload = {
+      teamName: 'Quantum Enigma Squad',
+      leaderName: 'Dr. Jane Smith',
+      leaderEmail: 'jane.smith.lead@quantum.edu',
+      members: [
+        { name: 'Bob Marley', email: 'bob.marley@quantum.edu' },
+        { name: 'Alice Cooper', email: 'alice.cooper@quantum.edu' },
+      ],
+      college: 'Quantum Institute of Technology',
+    };
+
+    const res = await request(app)
+      .post('/api/admin/teams/manual')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(payload);
+
+    expect(res.status).toBe(201);
+    expect(res.body.team).toBeDefined();
+    expect(res.body.team.teamName).toBe('Quantum Enigma Squad');
+    expect(res.body.team.members.length).toBe(3);
+    expect(res.body.team.leaderId.email).toBe('jane.smith.lead@quantum.edu');
+    createdTeamId = res.body.team._id;
+
+    // Verify Account records created for Google Auth login with specified names
+    const leaderAccount = await Account.findOne({ email: 'jane.smith.lead@quantum.edu' });
+    expect(leaderAccount).toBeDefined();
+    expect(leaderAccount?.name).toBe('Dr. Jane Smith');
+
+    const bobAccount = await Account.findOne({ email: 'bob.marley@quantum.edu' });
+    expect(bobAccount).toBeDefined();
+    expect(bobAccount?.name).toBe('Bob Marley');
+
+    const aliceAccount = await Account.findOne({ email: 'alice.cooper@quantum.edu' });
+    expect(aliceAccount).toBeDefined();
+    expect(aliceAccount?.name).toBe('Alice Cooper');
+
+    // Verify duplicate team name rejection
+    const dupRes = await request(app)
+      .post('/api/admin/teams/manual')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(payload);
+    expect(dupRes.status).toBe(400);
+    expect(dupRes.body.error).toContain('already exists');
+  });
+
+  it('rejects participant who already belongs to another team', async () => {
+    const payload = {
+      teamName: 'Second Team Attempt',
+      leaderName: 'Mark Ronson',
+      leaderEmail: 'mark.ronson@second.edu',
+      members: [{ name: 'Bob Marley', email: 'bob.marley@quantum.edu' }],
+    };
+
+    const res = await request(app)
+      .post('/api/admin/teams/manual')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(payload);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('already belong to a team');
+  });
+
+  it('deletes team, members, accounts, and any associated scores & submissions', async () => {
+    // 1. Add mock submission and evaluation for created team
+    await Submission.create({
+      stage: 'cleaning',
+      teamId: createdTeamId,
+      status: 'submitted',
+      isLocked: true,
+      payload: {
+        cleanedDatasetUrl: 'https://test.com/data.csv',
+        cleaningSummary: 'Cleaned anomalies',
+        cleaningNotes: 'Pandas dropna',
+      },
+      submittedAt: new Date(),
+    });
+
+    await Evaluation.create({
+      stage: 'cleaning',
+      targetTeamId: createdTeamId,
+      submissionId: new mongoose.Types.ObjectId(),
+      evaluatorEmail: 'evaluator-test@iste.org',
+      score: 92,
+      feedback: 'Good work',
+      status: 'completed',
+    });
+
+    // 2. Perform deletion
+    const delRes = await request(app)
+      .delete(`/api/admin/teams/${createdTeamId}`)
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(delRes.status).toBe(200);
+    expect(delRes.body.message).toContain('permanently deleted');
+
+    // 3. Verify Team is deleted
+    const teamCheck = await Team.findById(createdTeamId);
+    expect(teamCheck).toBeNull();
+
+    // 4. Verify Participants are deleted
+    const partCheck = await Participant.find({
+      email: { $in: ['jane.smith.lead@quantum.edu', 'bob.marley@quantum.edu', 'alice.cooper@quantum.edu'] },
+    });
+    expect(partCheck.length).toBe(0);
+
+    // 5. Verify public Accounts are deleted
+    const accCheck = await Account.find({
+      email: { $in: ['jane.smith.lead@quantum.edu', 'bob.marley@quantum.edu', 'alice.cooper@quantum.edu'] },
+    });
+    expect(accCheck.length).toBe(0);
+
+    // 6. Verify Submissions are deleted
+    const subCheck = await Submission.find({ teamId: createdTeamId });
+    expect(subCheck.length).toBe(0);
+
+    // 7. Verify Evaluations are deleted
+    const evalCheck = await Evaluation.find({ targetTeamId: createdTeamId });
+    expect(evalCheck.length).toBe(0);
+  });
+});

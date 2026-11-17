@@ -48,3 +48,5 @@ temp/
 .cache/
 .parcel-cache/
 .turbo/
+
+graphify-out/

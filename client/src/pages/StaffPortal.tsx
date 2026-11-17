@@ -30,6 +30,9 @@ import {
   RotateCcw,
   ExternalLink,
   Search,
+  UserPlus,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 
 export const StaffPortal: React.FC = () => {
@@ -80,6 +83,23 @@ export const StaffPortal: React.FC = () => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Manual Team Creation
+  const [createTeamModal, setCreateTeamModal] = useState(false);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [newLeaderName, setNewLeaderName] = useState('');
+  const [newLeaderEmail, setNewLeaderEmail] = useState('');
+  const [newCollege, setNewCollege] = useState('');
+  const [newMembers, setNewMembers] = useState<Array<{ name: string; email: string }>>([
+    { name: '', email: '' },
+  ]);
+  const [createTeamLoading, setCreateTeamLoading] = useState(false);
+  const [createTeamError, setCreateTeamError] = useState<string | null>(null);
+
+  // Delete Team State
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Accounts & Audit
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -273,6 +293,143 @@ export const StaffPortal: React.FC = () => {
       setNotice({ type: 'error', message: err.message || 'Failed to apply import.' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Admin: Member Rows for Team Creation
+  const handleAddMemberRow = () => {
+    setNewMembers([...newMembers, { name: '', email: '' }]);
+  };
+
+  const handleRemoveMemberRow = (index: number) => {
+    setNewMembers(newMembers.filter((_, i) => i !== index));
+  };
+
+  const handleMemberChange = (index: number, field: 'name' | 'email', value: string) => {
+    const updated = [...newMembers];
+    updated[index][field] = value;
+    setNewMembers(updated);
+  };
+
+  // Admin: Create Team Manually
+  const handleCreateTeamManually = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateTeamError(null);
+
+    if (!newTeamName.trim()) {
+      setCreateTeamError('Team name is required.');
+      return;
+    }
+    if (!newLeaderName.trim()) {
+      setCreateTeamError('Leader name is required.');
+      return;
+    }
+    if (!newLeaderEmail.trim()) {
+      setCreateTeamError('Leader email is required.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newLeaderEmail.trim())) {
+      setCreateTeamError('Please provide a valid leader email address.');
+      return;
+    }
+
+    // Validate and clean member rows
+    const cleanedMembers: Array<{ name: string; email: string }> = [];
+    const seenEmails = new Set<string>([newLeaderEmail.trim().toLowerCase()]);
+
+    for (let i = 0; i < newMembers.length; i++) {
+      const m = newMembers[i];
+      const trimmedName = m.name.trim();
+      const trimmedEmail = m.email.trim().toLowerCase();
+
+      // Skip row if both name and email are completely empty
+      if (!trimmedName && !trimmedEmail) continue;
+
+      if (!trimmedName) {
+        setCreateTeamError(`Member #${i + 1} name is required.`);
+        return;
+      }
+      if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+        setCreateTeamError(`Member #${i + 1} ("${trimmedName}") requires a valid email address.`);
+        return;
+      }
+      if (seenEmails.has(trimmedEmail)) {
+        setCreateTeamError(`Duplicate email detected: "${trimmedEmail}". Each member must have a distinct email.`);
+        return;
+      }
+      seenEmails.add(trimmedEmail);
+      cleanedMembers.push({ name: trimmedName, email: trimmedEmail });
+    }
+
+    setCreateTeamLoading(true);
+    try {
+      const res = await api.post<any>('/admin/teams/manual', {
+        teamName: newTeamName.trim(),
+        leaderName: newLeaderName.trim(),
+        leaderEmail: newLeaderEmail.trim(),
+        college: newCollege.trim() || 'Independent',
+        members: cleanedMembers,
+      });
+
+      setNotice({
+        type: 'success',
+        message: `Team "${res.team?.teamName || newTeamName}" and ${res.team?.members?.length || cleanedMembers.length + 1} participant accounts provisioned successfully.`,
+      });
+
+      // Refresh data
+      const updatedTeams = await api.get<Team[]>('/admin/teams');
+      setTeams(updatedTeams);
+      const updatedParticipants = await api.get<Participant[]>('/admin/participants');
+      setParticipants(updatedParticipants);
+      const updatedAccounts = await api.get<any[]>('/admin/accounts');
+      setAccounts(updatedAccounts);
+
+      // Reset form & close modal
+      setNewTeamName('');
+      setNewLeaderName('');
+      setNewLeaderEmail('');
+      setNewCollege('');
+      setNewMembers([{ name: '', email: '' }]);
+      setCreateTeamModal(false);
+    } catch (err: any) {
+      setCreateTeamError(err.message || 'Failed to create team.');
+    } finally {
+      setCreateTeamLoading(false);
+    }
+  };
+
+  // Admin: Delete Team
+  const handleDeleteTeam = async () => {
+    if (!teamToDelete) return;
+    setDeleteLoading(true);
+    setNotice(null);
+    try {
+      const res = await api.delete<any>(`/admin/teams/${teamToDelete._id}`);
+      setNotice({
+        type: 'success',
+        message: res.message || `Team "${teamToDelete.teamName}" was permanently deleted.`,
+      });
+
+      // Refresh data
+      const updatedTeams = await api.get<Team[]>('/admin/teams');
+      setTeams(updatedTeams);
+      const updatedParticipants = await api.get<Participant[]>('/admin/participants');
+      setParticipants(updatedParticipants);
+      const updatedAccounts = await api.get<any[]>('/admin/accounts');
+      setAccounts(updatedAccounts);
+      await loadQueue();
+
+      setDeleteModalOpen(false);
+      setTeamToDelete(null);
+    } catch (err: any) {
+      setNotice({
+        type: 'error',
+        message: err.message || 'Failed to delete team.',
+      });
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -682,15 +839,29 @@ export const StaffPortal: React.FC = () => {
       {/* Tab: Teams & Participants */}
       {isAdmin && activeTab === 'teams' && (
         <div className="space-y-4">
-          <div className="relative max-w-sm">
-            <input
-              type="text"
-              placeholder="Filter teams..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="input-field pl-9 text-xs"
-            />
-            <Search className="w-4 h-4 text-ink-muted absolute left-3 top-2.5" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="relative max-w-sm flex-1">
+              <input
+                type="text"
+                placeholder="Filter teams..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="input-field pl-9 text-xs"
+              />
+              <Search className="w-4 h-4 text-ink-muted absolute left-3 top-2.5" />
+            </div>
+
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<UserPlus className="w-4 h-4" />}
+              onClick={() => {
+                setCreateTeamError(null);
+                setCreateTeamModal(true);
+              }}
+            >
+              Create Team Manually
+            </Button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -704,7 +875,20 @@ export const StaffPortal: React.FC = () => {
                         <div className="font-semibold text-ink">{t.teamName}</div>
                         <div className="text-[11px] text-ink-muted">{t.members?.length || 0} members</div>
                       </div>
-                      <Badge variant={t.disqualified ? 'signal' : 'mist'}>{t.disqualified ? 'Disqualified' : 'Active'}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={t.disqualified ? 'signal' : 'mist'}>{t.disqualified ? 'Disqualified' : 'Active'}</Badge>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTeamToDelete(t);
+                            setDeleteModalOpen(true);
+                          }}
+                          className="p-1 rounded text-ink-muted hover:text-signal hover:bg-mist transition-colors"
+                          title="Delete Team"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
               </div>
@@ -776,6 +960,194 @@ export const StaffPortal: React.FC = () => {
           <div className="pt-3 flex justify-end gap-2 border-t border-mist">
             <Button variant="secondary" onClick={() => setTransitionModal(false)}>Cancel</Button>
             <Button variant="primary" loading={loading} onClick={handleTransitionStage}>Confirm Phase</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Manual Team Creation Modal */}
+      <Modal
+        isOpen={createTeamModal}
+        onClose={() => setCreateTeamModal(false)}
+        title="Create Team Manually"
+        description="Specify the team name, leader details, and team member names & emails. Google OAuth accounts and team rosters will be created automatically."
+        maxWidth="lg"
+      >
+        <form onSubmit={handleCreateTeamManually} className="space-y-4 text-xs">
+          {createTeamError && <Alert type="error">{createTeamError}</Alert>}
+
+          <div>
+            <label className="block font-semibold text-ink uppercase mb-1">
+              Team Name *
+            </label>
+            <input
+              type="text"
+              required
+              value={newTeamName}
+              onChange={(e) => setNewTeamName(e.target.value)}
+              placeholder="e.g. Neural Dynamics"
+              className="input-field"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block font-semibold text-ink uppercase mb-1">
+                Leader Full Name *
+              </label>
+              <input
+                type="text"
+                required
+                value={newLeaderName}
+                onChange={(e) => setNewLeaderName(e.target.value)}
+                placeholder="e.g. Alex Johnson"
+                className="input-field"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-ink uppercase mb-1">
+                Leader Email (Google Login) *
+              </label>
+              <input
+                type="email"
+                required
+                value={newLeaderEmail}
+                onChange={(e) => setNewLeaderEmail(e.target.value)}
+                placeholder="alex.johnson@gmail.com"
+                className="input-field"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block font-semibold text-ink uppercase mb-1">
+              College / Institution
+            </label>
+            <input
+              type="text"
+              value={newCollege}
+              onChange={(e) => setNewCollege(e.target.value)}
+              placeholder="e.g. Stanford University or Independent"
+              className="input-field"
+            />
+          </div>
+
+          {/* Dynamic Team Members Section */}
+          <div className="pt-2 border-t border-mist">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <span className="font-semibold text-ink uppercase">Team Members</span>
+                <span className="text-[11px] text-ink-muted ml-2">(Specify name and email for each member)</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleAddMemberRow}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold text-signal hover:bg-mist transition-colors border border-mist"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Member
+              </button>
+            </div>
+
+            <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
+              {newMembers.map((member, idx) => (
+                <div key={idx} className="flex items-center gap-2 p-2 rounded bg-paper/60 border border-mist">
+                  <div className="text-[11px] font-bold text-ink-muted w-5 text-center">
+                    #{idx + 1}
+                  </div>
+                  <input
+                    type="text"
+                    value={member.name}
+                    onChange={(e) => handleMemberChange(idx, 'name', e.target.value)}
+                    placeholder="Member full name"
+                    className="input-field text-xs flex-1"
+                  />
+                  <input
+                    type="email"
+                    value={member.email}
+                    onChange={(e) => handleMemberChange(idx, 'email', e.target.value)}
+                    placeholder="member@email.com"
+                    className="input-field text-xs flex-1"
+                  />
+                  {newMembers.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveMemberRow(idx)}
+                      className="p-1.5 rounded text-ink-muted hover:text-signal hover:bg-white transition-colors"
+                      title="Remove member"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-ink-muted mt-2">
+              Each member's email is registered as their Google OAuth identifier and added to this team's roster.
+            </p>
+          </div>
+
+          <div className="pt-3 flex justify-end gap-2 border-t border-mist">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setCreateTeamModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={createTeamLoading}
+              icon={<UserPlus className="w-4 h-4" />}
+            >
+              Create Team
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Delete Team Confirmation Modal */}
+      <Modal
+        isOpen={deleteModalOpen}
+        onClose={() => setDeleteModalOpen(false)}
+        title="Delete Team Permanently"
+      >
+        <div className="space-y-4 text-xs text-ink leading-relaxed">
+          <p>
+            Are you sure you want to delete <strong className="text-signal">{teamToDelete?.teamName}</strong>?
+          </p>
+          <div className="p-3 bg-red-50 text-red-900 rounded border border-red-200 space-y-1">
+            <p className="font-bold">This permanent action will remove:</p>
+            <ul className="list-disc list-inside space-y-0.5 text-[11px]">
+              <li>The team profile and leadership mapping</li>
+              <li>All participant records and their Google OAuth accounts</li>
+              <li>All submissions across all competition rounds</li>
+              <li>All evaluation scores and feedback</li>
+              <li>Any published leaderboard snapshot entries</li>
+            </ul>
+          </div>
+
+          <div className="pt-3 flex justify-end gap-2 border-t border-mist">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setDeleteModalOpen(false);
+                setTeamToDelete(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              loading={deleteLoading}
+              icon={<Trash2 className="w-4 h-4" />}
+              onClick={handleDeleteTeam}
+            >
+              Confirm Delete
+            </Button>
           </div>
         </div>
       </Modal>

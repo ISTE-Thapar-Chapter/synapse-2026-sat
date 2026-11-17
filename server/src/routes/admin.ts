@@ -5,6 +5,10 @@ import { requireAuth, requireRole } from '../middleware/roles.js';
 import { Account } from '../models/Account.js';
 import { Participant } from '../models/Participant.js';
 import { Team } from '../models/Team.js';
+import { Submission } from '../models/Submission.js';
+import { Evaluation } from '../models/Evaluation.js';
+import { LeaderboardSnapshot } from '../models/LeaderboardSnapshot.js';
+import { CompanyAssignment } from '../models/CompanyAssignment.js';
 import { DatasetAssignment } from '../models/DatasetAssignment.js';
 import { CompetitionConfig } from '../models/CompetitionConfig.js';
 import { AuditLog } from '../models/AuditLog.js';
@@ -194,48 +198,257 @@ router.post('/teams/manual', async (req: Request, res: Response, next: NextFunct
   try {
     const parsed = ManualTeamCreateSchema.parse(req.body);
     const teamName = parsed.teamName.trim();
+    const leaderName = parsed.leaderName.trim();
+    const leaderEmail = parsed.leaderEmail.toLowerCase().trim();
+    const college = (parsed.college || 'Independent').trim();
 
-    const existingTeam = await Team.findOne({ teamName });
+    // 1. Team name uniqueness check (case-insensitive)
+    const escapedTeamName = teamName.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+    const existingTeam = await Team.findOne({ teamName: { $regex: new RegExp(`^${escapedTeamName}$`, 'i') } });
     if (existingTeam) {
-      return res.status(400).json({ error: 'A team with this registered name already exists.' });
+      return res.status(400).json({ error: `A team named "${existingTeam.teamName}" already exists.` });
     }
 
-    const leader = await Participant.findOne({ email: parsed.leaderEmail.toLowerCase().trim() });
-    if (!leader) {
-      return res.status(400).json({ error: `Leader email ${parsed.leaderEmail} not found among participants.` });
+    // 2. Normalize and gather all team members with names and emails
+    const memberMap = new Map<string, string>(); // email -> name
+
+    // From parsed.members ([{ name, email }])
+    if (Array.isArray(parsed.members)) {
+      for (const m of parsed.members) {
+        const memEmail = m.email.toLowerCase().trim();
+        const memName = m.name.trim();
+        if (memEmail && memEmail !== leaderEmail) {
+          memberMap.set(memEmail, memName);
+        }
+      }
     }
 
-    const memberEmails = Array.from(new Set([parsed.leaderEmail.toLowerCase().trim(), ...parsed.memberEmails.map((e) => e.toLowerCase().trim())]));
-    const memberParticipants = await Participant.find({ email: { $in: memberEmails } });
-    const memberIds = memberParticipants.map((m) => m._id as mongoose.Types.ObjectId);
+    // From fallback arrays if provided
+    const rawEmails = [
+      ...(parsed.participantEmails || []),
+      ...(parsed.memberEmails || []),
+    ];
+    for (const em of rawEmails) {
+      const memEmail = em.toLowerCase().trim();
+      if (memEmail && memEmail !== leaderEmail && !memberMap.has(memEmail)) {
+        const defaultName = memEmail.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        memberMap.set(memEmail, defaultName);
+      }
+    }
 
+    const memberEmails = Array.from(memberMap.keys());
+
+    // 3. Check if leader or any participant is already linked to another active team
+    const allEmails = [leaderEmail, ...memberEmails];
+    const conflictingParticipants = await Participant.find({
+      email: { $in: allEmails },
+      teamId: { $ne: null },
+    }).populate('teamId', 'teamName');
+
+    if (conflictingParticipants.length > 0) {
+      const conflictList = conflictingParticipants
+        .map((p) => `${p.email} (already in team "${(p.teamId as any)?.teamName || 'another team'}")`)
+        .join(', ');
+      return res.status(400).json({
+        error: `Cannot assign participants who already belong to a team: ${conflictList}`,
+      });
+    }
+
+    // 4. Parse leader name
+    const leaderParts = leaderName.split(' ');
+    const leaderFirstName = leaderParts[0];
+    const leaderLastName = leaderParts.length > 1 ? leaderParts.slice(1).join(' ') : null;
+
+    // 5. Upsert Account & Participant for Leader
+    let leaderAccount = await Account.findOne({ email: leaderEmail });
+    if (!leaderAccount) {
+      leaderAccount = new Account({
+        name: leaderName,
+        email: leaderEmail,
+        role: 'public',
+      });
+      await leaderAccount.save();
+    } else {
+      leaderAccount.name = leaderName;
+      await leaderAccount.save();
+    }
+
+    let leaderParticipant = await Participant.findOne({ email: leaderEmail });
+    if (!leaderParticipant) {
+      leaderParticipant = new Participant({
+        firstName: leaderFirstName,
+        lastName: leaderLastName,
+        email: leaderEmail,
+        college,
+        role: 'leader',
+      });
+      await leaderParticipant.save();
+    } else {
+      leaderParticipant.firstName = leaderFirstName;
+      leaderParticipant.lastName = leaderLastName;
+      leaderParticipant.college = college || leaderParticipant.college;
+      leaderParticipant.role = 'leader';
+      await leaderParticipant.save();
+    }
+
+    // 6. Upsert Account & Participant for each member
+    const memberParticipantIds: mongoose.Types.ObjectId[] = [leaderParticipant._id as mongoose.Types.ObjectId];
+
+    for (const [memEmail, memName] of memberMap.entries()) {
+      const parts = memName.split(' ');
+      const firstName = parts[0];
+      const lastName = parts.length > 1 ? parts.slice(1).join(' ') : null;
+
+      let memAccount = await Account.findOne({ email: memEmail });
+      if (!memAccount) {
+        memAccount = new Account({
+          name: memName,
+          email: memEmail,
+          role: 'public',
+        });
+        await memAccount.save();
+      } else {
+        memAccount.name = memName;
+        await memAccount.save();
+      }
+
+      let memParticipant = await Participant.findOne({ email: memEmail });
+      if (!memParticipant) {
+        memParticipant = new Participant({
+          firstName,
+          lastName,
+          email: memEmail,
+          college,
+          role: 'member',
+        });
+        await memParticipant.save();
+      } else {
+        memParticipant.firstName = firstName;
+        memParticipant.lastName = lastName;
+        memParticipant.college = college || memParticipant.college;
+        memParticipant.role = 'member';
+        await memParticipant.save();
+      }
+
+      memberParticipantIds.push(memParticipant._id as mongoose.Types.ObjectId);
+    }
+
+    // 7. Create the Team
     const team = new Team({
       teamName,
-      members: memberIds,
-      leaderId: leader._id,
+      members: memberParticipantIds,
+      leaderId: leaderParticipant._id,
       mentorName: parsed.mentorName || null,
       mentorEmail: parsed.mentorEmail || null,
     });
     await team.save();
 
-    // Link participants to team
-    for (const m of memberParticipants) {
-      m.teamId = team._id as mongoose.Types.ObjectId;
-      m.role = m._id.toString() === leader._id.toString() ? 'leader' : 'member';
-      await m.save();
-    }
+    // 8. Associate teamId on all participants
+    await Participant.updateMany(
+      { _id: { $in: memberParticipantIds } },
+      { $set: { teamId: team._id } }
+    );
 
+    // 9. Audit Log
     await logAudit(req.user!.email, 'TEAM_MANUALLY_CREATED', 'Team', team._id.toString(), {
       teamName,
-      leaderEmail: parsed.leaderEmail,
-      membersCount: memberIds.length,
+      leaderName,
+      leaderEmail,
+      participantCount: memberParticipantIds.length,
+      members: Array.from(memberMap.entries()).map(([email, name]) => ({ email, name })),
     });
 
-    const populated = await Team.findById(team._id)
-      .populate('members')
-      .populate('leaderId');
+    const populatedTeam = await Team.findById(team._id)
+      .populate('members', 'firstName lastName email role college restricted')
+      .populate('leaderId', 'firstName lastName email');
 
-    return res.status(201).json(populated);
+    return res.status(201).json({
+      message: 'Team and participant accounts created successfully.',
+      team: populatedTeam,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Permanently delete team, all linked member participants & public accounts, and all scores/submissions
+ */
+router.delete('/teams/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ error: 'Team not found' });
+    }
+
+    const teamName = team.teamName;
+
+    // 1. Gather all participants associated with this team
+    const participants = await Participant.find({
+      $or: [{ teamId: team._id }, { _id: { $in: team.members } }],
+    });
+    const participantIds = participants.map((p) => p._id);
+    const participantEmails = participants.map((p) => p.email.toLowerCase().trim());
+
+    // 2. Delete the Team record
+    await Team.findByIdAndDelete(team._id);
+
+    // 3. Delete Participant records
+    const delParticipants = await Participant.deleteMany({ _id: { $in: participantIds } });
+
+    // 4. Delete Google Auth Account records for participants (only public role, preserving admin/evaluator)
+    const delAccounts = await Account.deleteMany({
+      email: { $in: participantEmails },
+      role: 'public',
+    });
+
+    // 5. Delete Submissions by this team
+    const delSubmissions = await Submission.deleteMany({ teamId: team._id });
+
+    // 6. Delete Evaluations / Scores for this team
+    const delEvaluations = await Evaluation.deleteMany({ targetTeamId: team._id });
+
+    // 7. Delete Dataset Assignments
+    await DatasetAssignment.deleteMany({ teamId: team._id });
+
+    // 8. Pull from published Leaderboard snapshots
+    await LeaderboardSnapshot.updateMany(
+      {},
+      { $pull: { entries: { teamId: team._id } } }
+    );
+
+    // 9. Pull from published Company assignments
+    await CompanyAssignment.updateMany(
+      {},
+      { $pull: { assignments: { teamId: team._id } } }
+    );
+
+    // 10. Audit Log
+    await logAudit(
+      req.user!.email,
+      'TEAM_DELETED',
+      'Team',
+      team._id.toString(),
+      {
+        teamName,
+        deletedParticipantsCount: delParticipants.deletedCount,
+        deletedAccountsCount: delAccounts.deletedCount,
+        deletedSubmissionsCount: delSubmissions.deletedCount,
+        deletedEvaluationsCount: delEvaluations.deletedCount,
+        participantEmails,
+      }
+    );
+
+    return res.json({
+      message: `Team "${teamName}", its ${delParticipants.deletedCount} members, and all associated submissions and scores were permanently deleted.`,
+      deletedTeamId: team._id,
+      deletedParticipantsCount: delParticipants.deletedCount,
+      deletedAccountsCount: delAccounts.deletedCount,
+      deletedSubmissionsCount: delSubmissions.deletedCount,
+      deletedEvaluationsCount: delEvaluations.deletedCount,
+    });
   } catch (err) {
     next(err);
   }

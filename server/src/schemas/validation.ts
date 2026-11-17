@@ -15,8 +15,9 @@ export const CleaningSubmissionSchema = z.object({
 });
 
 export const RequirementAnswerSchema = z.object({
-  title: z.string().min(1, 'Requirement title is required'),
-  response: z.string().min(5, 'Requirement response / solution must be at least 5 characters'),
+  title: z.string().min(1, 'Feature title is required'),
+  companyName: z.string().min(2, 'Company name is required for this feature').optional().default('Enterprise Solution'),
+  response: z.string().min(5, 'Methodology must be at least 5 characters'),
   link: z.string().url('Must be a valid URL').optional().or(z.literal('')),
   notes: z.string().optional().default(''),
 });

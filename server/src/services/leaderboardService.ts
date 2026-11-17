@@ -85,16 +85,14 @@ export class LeaderboardService {
       };
     });
 
-    // 5. Sort based on score desc, then submission time asc
+    // 5. Sort based on score desc, then submission time asc (earlier time wins), then team name asc
     rawEntries.sort((a, b) => {
       if (b.score !== a.score) {
         return b.score - a.score;
       }
-      if (tieBreakPolicy === 'score_desc_then_time_asc') {
-        const timeA = a.submissionTime ? new Date(a.submissionTime).getTime() : Infinity;
-        const timeB = b.submissionTime ? new Date(b.submissionTime).getTime() : Infinity;
-        if (timeA !== timeB) return timeA - timeB;
-      }
+      const timeA = a.submissionTime ? new Date(a.submissionTime).getTime() : Infinity;
+      const timeB = b.submissionTime ? new Date(b.submissionTime).getTime() : Infinity;
+      if (timeA !== timeB) return timeA - timeB;
       return a.teamName.localeCompare(b.teamName);
     });
 

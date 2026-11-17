@@ -66,9 +66,15 @@ export const TeamPortal: React.FC = () => {
 
   // Form: Five Requirements & Company Methodologies
   const [formRequirements, setFormRequirements] = useState<{
-    companyName: string;
-    methodologySummary: string;
-    requirements: Array<{ title: string; response: string; link: string; notes: string }>;
+    companyName?: string;
+    methodologySummary?: string;
+    requirements: Array<{
+      title: string;
+      companyName: string;
+      response: string;
+      link: string;
+      notes: string;
+    }>;
     generalNotes: string;
   }>({
     companyName: '',
@@ -151,6 +157,7 @@ export const TeamPortal: React.FC = () => {
           const matched = existing.find((r: any) => r.title === title);
           return {
             title,
+            companyName: matched?.companyName || '',
             response: matched?.response || '',
             link: matched?.link || '',
             notes: matched?.notes || '',
@@ -407,9 +414,16 @@ export const TeamPortal: React.FC = () => {
     setSaving(true);
     setNotice(null);
     try {
+      const payloadToSend = {
+        ...formRequirements,
+        companyName:
+          formRequirements.companyName ||
+          formRequirements.requirements.map((r) => r.companyName).filter(Boolean).join(', ') ||
+          'Enterprise Solution Track',
+      };
       const res = await api.put<{ submission: Submission }>('/submissions/draft', {
         stage: 'requirements',
-        payload: formRequirements,
+        payload: payloadToSend,
       });
       setRequirementsSubmission(res.submission);
       setNotice({ type: 'success', message: 'Requirements draft saved successfully.' });
@@ -422,20 +436,16 @@ export const TeamPortal: React.FC = () => {
 
   const handleSubmitRequirements = async () => {
     setReqSubmitError(null);
-    if (!formRequirements.companyName.trim() || formRequirements.companyName.trim().length < 2) {
-      setReqSubmitError('Please enter your target Company / Organization name.');
-      return;
-    }
-    if (!formRequirements.methodologySummary.trim() || formRequirements.methodologySummary.trim().length < 5) {
-      setReqSubmitError('Please describe your overall solution methodology (at least 5 characters).');
-      return;
-    }
 
-    // Validate that each requirement has at least 5 characters response
+    // Validate that each requirement has target company and at least 5 characters response
     for (let i = 0; i < formRequirements.requirements.length; i++) {
       const item = formRequirements.requirements[i];
-      if (!item.response.trim() || item.response.trim().length < 5) {
-        setReqSubmitError(`Please provide a methodology description for "${item.title || `Requirement #${i + 1}`}" (at least 5 characters).`);
+      if (!item.companyName || !item.companyName.trim() || item.companyName.trim().length < 2) {
+        setReqSubmitError(`Please specify the Target Output Company for "${item.title || `Feature #${i + 1}`}".`);
+        return;
+      }
+      if (!item.response || !item.response.trim() || item.response.trim().length < 5) {
+        setReqSubmitError(`Please provide a methodology description for "${item.title || `Feature #${i + 1}`}" (at least 5 characters).`);
         return;
       }
     }
@@ -443,9 +453,16 @@ export const TeamPortal: React.FC = () => {
     setSubmitting(true);
     setNotice(null);
     try {
+      const payloadToSend = {
+        ...formRequirements,
+        companyName:
+          formRequirements.companyName ||
+          formRequirements.requirements.map((r) => r.companyName).filter(Boolean).join(', ') ||
+          'Enterprise Solution Track',
+      };
       const res = await api.post<{ submission: Submission }>('/submissions/submit', {
         stage: 'requirements',
-        payload: formRequirements,
+        payload: payloadToSend,
       });
       setRequirementsSubmission(res.submission);
       setHasSubmittedRequirements(true);
@@ -867,47 +884,13 @@ export const TeamPortal: React.FC = () => {
                 )}
 
                 <div className="space-y-6">
-                  {/* Company Name & Overall Methodology */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-paper/40 rounded-lg border border-mist">
-                    <div>
-                      <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                        Company / Organization Name *
-                      </label>
-                      <input
-                        type="text"
-                        disabled={!canEditRequirements}
-                        value={formRequirements.companyName}
-                        onChange={(e) => handleReqFieldChange('companyName', e.target.value)}
-                        placeholder="e.g. SpaceX, Tesla, Novacorp Labs, HealthAI"
-                        className="input-field text-xs"
-                      />
-                      <p className="text-[11px] text-ink-muted mt-1">
-                        Name of the company or industry problem your feature set addresses.
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-ink uppercase mb-1">
-                        Overall Solution Methodology *
-                      </label>
-                      <textarea
-                        rows={2}
-                        disabled={!canEditRequirements}
-                        value={formRequirements.methodologySummary}
-                        onChange={(e) => handleReqFieldChange('methodologySummary', e.target.value)}
-                        placeholder="High-level architecture, algorithms, and models deployed."
-                        className="input-field text-xs"
-                      />
-                    </div>
-                  </div>
-
                   {formRequirements.requirements.map((reqItem, idx) => (
                     <div key={idx} className="p-4 bg-paper/60 rounded-lg border border-mist space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="text-[11px] font-bold text-signal uppercase tracking-wider">
-                          Requirement #{idx + 1}
+                          Feature #{idx + 1}
                         </div>
-                        {reqItem.response.trim().length >= 5 && (
+                        {reqItem.companyName.trim().length >= 2 && reqItem.response.trim().length >= 5 && (
                           <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold">
                             <CheckCircle2 className="w-3 h-3" /> Ready
                           </span>
@@ -918,7 +901,24 @@ export const TeamPortal: React.FC = () => {
 
                       <div>
                         <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
-                          Response / Solution Description *
+                          Target Output Company / Organization *
+                        </label>
+                        <input
+                          type="text"
+                          disabled={!canEditRequirements}
+                          value={reqItem.companyName}
+                          onChange={(e) => handleReqItemChange(idx, 'companyName', e.target.value)}
+                          placeholder="e.g. Tesla, SpaceX, Google Health, Novo Nordisk..."
+                          className="input-field text-xs"
+                        />
+                        <p className="text-[11px] text-ink-muted mt-1">
+                          Specify the target enterprise or organization for this specific feature.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                          Methodology & Solution Description *
                         </label>
                         <textarea
                           rows={3}
@@ -1039,11 +1039,9 @@ export const TeamPortal: React.FC = () => {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr>
-                        <th className="table-header w-16 text-center">Rank</th>
+                        <th className="table-header w-20 text-center">Rank</th>
                         <th className="table-header">Team Name</th>
-                        <th className="table-header">College / Institution</th>
-                        <th className="table-header">Status</th>
-                        <th className="table-header text-right">Score</th>
+                        <th className="table-header text-right w-28">Score</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1083,26 +1081,8 @@ export const TeamPortal: React.FC = () => {
                                 )}
                               </div>
                             </td>
-                            <td className="table-cell text-xs text-ink-muted">
-                              {entry.college || 'Independent'}
-                            </td>
-                            <td className="table-cell text-xs">
-                              {entry.status === 'Requirements Submitted' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                  <CheckCircle2 className="w-3 h-3" /> Completed
-                                </span>
-                              ) : entry.status === 'Cleaning Submitted' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-blue-800 border border-blue-200">
-                                  Cleaning Done
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-mist text-ink-muted">
-                                  In Progress
-                                </span>
-                              )}
-                            </td>
                             <td className="table-cell text-right font-mono font-bold text-ink">
-                              {entry.score ?? 0} <span className="text-xs text-ink-muted font-normal">pts</span>
+                              {entry.score ?? 0}
                             </td>
                           </tr>
                         );

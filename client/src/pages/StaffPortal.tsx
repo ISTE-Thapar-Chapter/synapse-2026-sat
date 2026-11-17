@@ -658,7 +658,7 @@ export const StaffPortal: React.FC = () => {
                       </span>
                       <div className="space-y-2.5">
                         {activeTarget.payload.requirements.map((req: any, idx: number) => (
-                          <div key={idx} className="p-3 bg-white rounded border border-mist space-y-1.5">
+                          <div key={idx} className="p-3 bg-white rounded border border-mist space-y-2">
                             <div className="flex items-center justify-between">
                               <span className="font-bold text-ink text-xs">{req.title || `Requirement #${idx + 1}`}</span>
                               {req.link && (
@@ -673,6 +673,14 @@ export const StaffPortal: React.FC = () => {
                                 </a>
                               )}
                             </div>
+                            {req.companyName && (
+                              <div className="text-[11px] font-semibold text-ink">
+                                <span className="text-ink-muted font-normal">Target Output Company: </span>
+                                <span className="text-signal bg-signal/10 px-2 py-0.5 rounded font-mono">
+                                  {req.companyName}
+                                </span>
+                              </div>
+                            )}
                             <p className="text-ink-muted leading-relaxed whitespace-pre-wrap">{req.response}</p>
                             {req.notes && <div className="text-[11px] text-ink-muted italic">Notes: {req.notes}</div>}
                           </div>
@@ -774,8 +782,10 @@ export const StaffPortal: React.FC = () => {
                     {targets.map((t) => (
                       <tr key={t.teamId} className="hover:bg-paper/40">
                         <td className="table-cell font-semibold">{t.teamName}</td>
-                        <td className="table-cell text-xs text-ink font-medium">
-                          {t.payload?.companyName || 'Enterprise'}
+                        <td className="table-cell text-xs text-ink font-medium max-w-xs truncate">
+                          {Array.isArray(t.payload?.requirements) && t.payload.requirements.some((r: any) => r.companyName)
+                            ? t.payload.requirements.map((r: any) => r.companyName).filter(Boolean).join(', ')
+                            : t.payload?.companyName || 'Enterprise'}
                         </td>
                         <td className="table-cell text-xs text-ink-muted">
                           {t.submittedAt ? new Date(t.submittedAt).toLocaleTimeString() : '—'}

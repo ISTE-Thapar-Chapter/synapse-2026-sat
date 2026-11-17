@@ -49,23 +49,17 @@ export const LeaderboardPage: React.FC = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr>
-                  <th className="table-header w-16">Rank</th>
+                  <th className="table-header w-20 text-center">Rank</th>
                   <th className="table-header">Team Name</th>
-                  <th className="table-header">Score</th>
-                  <th className="table-header">Tie-break Note</th>
-                  <th className="table-header">Submitted At</th>
+                  <th className="table-header text-right w-28">Score</th>
                 </tr>
               </thead>
               <tbody>
                 {leaderboard.entries.map((e: LeaderboardEntry) => (
-                  <tr key={e.teamId} className="hover:bg-paper/40">
-                    <td className="table-cell font-bold">{e.rank}</td>
+                  <tr key={e.teamId} className="hover:bg-paper/40 border-b border-mist">
+                    <td className="table-cell font-bold text-center">{e.rank}</td>
                     <td className="table-cell font-semibold">{e.teamName}</td>
-                    <td className="table-cell font-mono font-bold text-signal">{e.score} / 100</td>
-                    <td className="table-cell text-xs text-ink-muted">{e.tieBreakReason || 'Direct Score'}</td>
-                    <td className="table-cell text-xs text-ink-muted">
-                      {e.submissionTime ? new Date(e.submissionTime).toLocaleTimeString() : 'N/A'}
-                    </td>
+                    <td className="table-cell text-right font-mono font-bold text-signal">{e.score}</td>
                   </tr>
                 ))}
               </tbody>

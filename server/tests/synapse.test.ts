@@ -45,9 +45,12 @@ beforeAll(async () => {
   await EventStage.findOneAndUpdate({ stageId: 'registration' }, { $set: { active: true } });
 
   // Clean prior test artifacts
-  await Participant.deleteMany({ email: { $in: ['rohit@cricket.in', 'rishi@gmail.com'] } });
-  await Team.deleteMany({ teamName: { $in: ['Hitmen', 'Alpha Squad'] } });
-  await Account.deleteMany({ email: { $in: ['rohit@cricket.in', 'rishi@gmail.com'] } });
+  await Participant.deleteMany({ email: { $in: ['rohit@cricket.in', 'rishi@gmail.com', 'seqleader@iste.org', 'seqmember@iste.org'] } });
+  await Team.deleteMany({ teamName: { $in: ['Hitmen', 'Alpha Squad', 'Sequential Innovators', 'Zeta Innovations', 'Alpha Innovations'] } });
+  await Account.deleteMany({ email: { $in: ['rohit@cricket.in', 'rishi@gmail.com', 'seqleader@iste.org', 'seqmember@iste.org'] } });
+  await Submission.deleteMany({});
+  await Evaluation.deleteMany({});
+  await LeaderboardSnapshot.deleteMany({});
 
   // Create accounts
   await Account.findOneAndUpdate(
@@ -312,6 +315,81 @@ describe('6. Leaderboard Calculation, Tie-breakers & Immutable Publication', () 
     expect(pubRes.status).toBe(200);
     expect(pubRes.body.published).toBe(true);
     expect(pubRes.body.leaderboard.entries[0].score).toBe(92);
+  });
+
+  it('correctly resolves ties: earlier submission time first, then team name alphabetically', async () => {
+    // Create two test teams
+    const teamZ = await Team.create({
+      teamName: 'Zeta Innovations',
+      teamId: 'SYN-TEST-ZETA',
+      members: [],
+    });
+    const teamA = await Team.create({
+      teamName: 'Alpha Innovations',
+      teamId: 'SYN-TEST-ALPHA',
+      members: [],
+    });
+
+    const earlyDate = new Date('2026-03-01T10:00:00Z');
+    const lateDate = new Date('2026-03-01T11:00:00Z');
+
+    const subZ = await Submission.create({
+      stage: 'requirements',
+      teamId: teamZ._id,
+      status: 'submitted',
+      submittedAt: earlyDate,
+      isLocked: true,
+      payload: { requirements: [] },
+    });
+    const subA = await Submission.create({
+      stage: 'requirements',
+      teamId: teamA._id,
+      status: 'submitted',
+      submittedAt: lateDate,
+      isLocked: true,
+      payload: { requirements: [] },
+    });
+
+    // Case 1: Both score 80, but Zeta submitted earlier than Alpha
+    await Evaluation.create({
+      targetTeamId: teamZ._id,
+      submissionId: subZ._id,
+      evaluatorEmail: 'evaluator@iste.org',
+      stage: 'requirements',
+      score: 80,
+      feedback: 'Great solution',
+      status: 'completed',
+    });
+    await Evaluation.create({
+      targetTeamId: teamA._id,
+      submissionId: subA._id,
+      evaluatorEmail: 'evaluator@iste.org',
+      stage: 'requirements',
+      score: 80,
+      feedback: 'Great solution',
+      status: 'completed',
+    });
+
+    const res1 = await LeaderboardService.calculateLiveLeaderboard();
+    const zetaEntry1 = res1.entries.find((e) => e.teamName === 'Zeta Innovations')!;
+    const alphaEntry1 = res1.entries.find((e) => e.teamName === 'Alpha Innovations')!;
+    // Zeta submitted earlier, so Zeta ranks higher (lower rank number)
+    expect(zetaEntry1.rank).toBeLessThan(alphaEntry1.rank);
+
+    // Case 2: Tied score and tied submission time -> Alpha Innovations precedes Zeta Innovations alphabetically
+    await Submission.updateOne({ teamId: teamZ._id, stage: 'requirements' }, { $set: { submittedAt: earlyDate } });
+    await Submission.updateOne({ teamId: teamA._id, stage: 'requirements' }, { $set: { submittedAt: earlyDate } });
+
+    const res2 = await LeaderboardService.calculateLiveLeaderboard();
+    const zetaEntry2 = res2.entries.find((e) => e.teamName === 'Zeta Innovations')!;
+    const alphaEntry2 = res2.entries.find((e) => e.teamName === 'Alpha Innovations')!;
+    // Same submission time, Alpha comes before Zeta alphabetically
+    expect(alphaEntry2.rank).toBeLessThan(zetaEntry2.rank);
+
+    // Clean up test teams
+    await Team.deleteMany({ _id: { $in: [teamZ._id, teamA._id] } });
+    await Evaluation.deleteMany({ targetTeamId: { $in: [teamZ._id, teamA._id] } });
+    await Submission.deleteMany({ teamId: { $in: [teamZ._id, teamA._id] } });
   });
 });
 

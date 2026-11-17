@@ -759,7 +759,6 @@ export const AdminPortal: React.FC = () => {
                       <th className="table-header w-16">Rank</th>
                       <th className="table-header">Team Name</th>
                       <th className="table-header">Score</th>
-                      <th className="table-header">Tie-break Detail</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -768,7 +767,6 @@ export const AdminPortal: React.FC = () => {
                         <td className="table-cell font-bold">{e.rank}</td>
                         <td className="table-cell font-semibold">{e.teamName}</td>
                         <td className="table-cell font-mono font-bold text-signal">{e.score}</td>
-                        <td className="table-cell text-xs text-ink-muted">{e.tieBreakReason || 'Direct Score'}</td>
                       </tr>
                     ))}
                   </tbody>

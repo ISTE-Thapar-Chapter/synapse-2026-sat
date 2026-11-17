@@ -10,6 +10,7 @@ export interface ISubmissionReopen {
 
 export interface IRequirementAnswer {
   title: string;
+  companyName?: string;
   response: string;
   link?: string;
   notes?: string;

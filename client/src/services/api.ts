@@ -1,4 +1,24 @@
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
+
+function validateApiBase(): void {
+  if (!/^https?:\/\//i.test(API_BASE) || typeof window === 'undefined') return;
+
+  const apiUrl = new URL(API_BASE);
+  const isLocalApi =
+    apiUrl.hostname === 'localhost' ||
+    apiUrl.hostname === '127.0.0.1' ||
+    apiUrl.hostname === '[::1]';
+
+  if (
+    window.location.protocol === 'https:' &&
+    apiUrl.protocol === 'http:' &&
+    !isLocalApi
+  ) {
+    throw new Error(
+      'Mixed-content blocked: VITE_API_URL must use HTTPS when the frontend is served over HTTPS.'
+    );
+  }
+}
 
 export class ApiError extends Error {
   statusCode: number;
@@ -13,6 +33,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  validateApiBase();
   const token = localStorage.getItem('synapse_token');
   const headers = new Headers(options.headers || {});
 

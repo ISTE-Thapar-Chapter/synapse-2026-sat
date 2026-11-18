@@ -4,6 +4,7 @@ import { env } from './config/env.js';
 import { connectDB } from './config/db.js';
 import { authMiddleware } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requestLogger } from './middleware/requestLogger.js';
 import { Account } from './models/Account.js';
 import { CompetitionConfig } from './models/CompetitionConfig.js';
 import { StageService } from './services/stageService.js';
@@ -22,14 +23,45 @@ import auctionRouter from './routes/auction.js';
 
 const app = express();
 
+// Request logging middleware - logs every incoming request to the console
+app.use(requestLogger);
+
 // Global Middleware
 const allowedOrigins = env.CLIENT_URL
-  ? env.CLIENT_URL.split(',').map((o) => o.trim())
-  : true;
+  ? env.CLIENT_URL
+      .split(',')
+      .map((origin) => origin.trim().replace(/\/+$/, ''))
+      .filter(Boolean)
+  : [];
+
+const isAllowedOrigin = (origin: string | undefined) => {
+  if (!origin) return true;
+  if (allowedOrigins.length === 0) {
+    return env.NODE_ENV !== 'production';
+  }
+
+  const normalizedOrigin = origin.replace(/\/+$/, '');
+  return allowedOrigins.some((allowedOrigin) => {
+    if (!allowedOrigin.includes('*')) {
+      return normalizedOrigin === allowedOrigin;
+    }
+
+    const pattern = allowedOrigin
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*');
+    return new RegExp(`^${pattern}$`).test(normalizedOrigin);
+  });
+};
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`Origin not allowed by CORS: ${origin}`));
+      }
+    },
     credentials: true,
   })
 );

@@ -50,16 +50,16 @@ import {
 } from 'lucide-react';
 
 export const StaffPortal: React.FC = () => {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { activeStage } = useStage();
   const navigate = useNavigate();
 
   // Role verification
   useEffect(() => {
-    if (user && user.role !== 'admin' && user.role !== 'evaluator' && user.role !== 'mentor') {
+    if (!authLoading && user && user.role !== 'admin' && user.role !== 'evaluator' && user.role !== 'mentor') {
       navigate('/', { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, authLoading, navigate]);
 
   const isAdmin = user?.role === 'admin';
   const isMentor = user?.role === 'mentor';
@@ -444,8 +444,26 @@ export const StaffPortal: React.FC = () => {
     }
   }, [activeTab, user]);
 
+  if (authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[300px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
   if (!user || (user.role !== 'admin' && user.role !== 'evaluator' && user.role !== 'mentor')) {
-    return <EmptyState title="Staff Access Required" description="This area is restricted to staff." />;
+    return (
+      <EmptyState
+        title="Staff Access Required"
+        description="This area is restricted to staff (administrators, evaluators, and mentors). Please sign in with an authorized staff account."
+        action={
+          <Button onClick={() => navigate('/login?staff=true')} variant="primary" size="sm">
+            Sign In to Staff Portal
+          </Button>
+        }
+      />
+    );
   }
 
   // Evaluator: Acquire target evaluation

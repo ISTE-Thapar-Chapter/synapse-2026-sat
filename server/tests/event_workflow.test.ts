@@ -54,6 +54,16 @@ beforeAll(async () => {
   await CompanyAssignment.deleteMany({});
   await QuizScore.deleteMany({});
   await RoundRobinQueue.deleteMany({});
+  await CompetitionConfig.findOneAndUpdate(
+    {},
+    {
+      $set: {
+        finalSubmissionOpen: false,
+        auctionCompanies: [],
+      },
+    },
+    { upsert: true }
+  );
 
   // 1. Create Staff Accounts
   await Account.create({
@@ -477,46 +487,90 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(batchRes.status).toBe(200);
     expect(batchRes.body.updatedCount).toBe(2);
 
-    // 2. Team Alpha checks their balance: 8.5 * 100 = 850 Tokens
+    // 1b. Mentor role is forbidden from quiz scoring
+    const mentorForbiddenQuizRes = await request(app)
+      .post('/api/auction/staff/quiz-scores')
+      .set('Authorization', `Bearer ${mentorToken}`)
+      .send({
+        multiplier: 100,
+        scores: [{ teamId: teamA._id.toString(), quizMarks: 9.0 }],
+      });
+    expect(mentorForbiddenQuizRes.status).toBe(403);
+
+    // 1c. Evaluator can save a single team's score directly
+    const singleQuizRes = await request(app)
+      .post(`/api/auction/staff/quiz-score/${teamB._id.toString()}`)
+      .set('Authorization', `Bearer ${evaluatorToken}`)
+      .send({
+        quizMarks: 6.5,
+        multiplier: 100,
+      });
+    expect(singleQuizRes.status).toBe(200);
+    expect(singleQuizRes.body.score.quizMarks).toBe(6.5);
+    expect(singleQuizRes.body.score.auctionBalance).toBe(650);
+
+    // 2. Team Alpha checks their balance: 8.5 * 100 = 850 Tokens (quizMarks hidden from participants)
     const balanceResA = await request(app)
       .get('/api/auction/my-balance')
       .set('Authorization', `Bearer ${leaderTokenA}`);
     expect(balanceResA.status).toBe(200);
-    expect(balanceResA.body.quizMarks).toBe(8.5);
-    expect(balanceResA.body.multiplier).toBe(100);
+    expect(balanceResA.body.quizMarks).toBeUndefined();
     expect(balanceResA.body.initialTokens).toBe(850);
     expect(balanceResA.body.remainingBalance).toBe(850);
 
-    // 3. Team Beta checks their balance: 6.0 * 100 = 600 Tokens
+    // 3. Team Beta checks their balance: 6.5 * 100 = 650 Tokens
     const balanceResB = await request(app)
       .get('/api/auction/my-balance')
       .set('Authorization', `Bearer ${leaderTokenB}`);
     expect(balanceResB.status).toBe(200);
-    expect(balanceResB.body.remainingBalance).toBe(600);
+    expect(balanceResB.body.remainingBalance).toBe(650);
   });
 
-  it('8. Live Auction Floor: Public viewing, competitive bidding, and company assignment', async () => {
-    // 1. Admin starts auction item 'auc-company-1' (CloudScale Dynamics)
+  it('8. Live Auction Floor: Bucket 2 companies management, bidding, assignment, and admin reassignments', async () => {
+    // 1. Admin configures Bucket 2 companies
+    const putCompRes = await request(app)
+      .put('/api/auction/companies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        companies: [
+          { id: 'auc-b2-1', name: 'CloudScale Dynamics', description: 'Premier infrastructure and distributed systems partner.', basePrice: 200 },
+          { id: 'auc-b2-2', name: 'Quantum Core', description: 'Fault-tolerant quantum computing systems.', basePrice: 250 },
+        ],
+      });
+    expect(putCompRes.status).toBe(200);
+    expect(putCompRes.body.companies.length).toBe(2);
+
+    // 1b. Evaluator is forbidden from starting auction items (admin only)
+    const evaluatorStartForbidden = await request(app)
+      .post('/api/auction/staff/start-item')
+      .set('Authorization', `Bearer ${evaluatorToken}`)
+      .send({
+        id: 'auc-b2-1',
+        name: 'CloudScale Dynamics',
+        basePrice: 200,
+      });
+    expect(evaluatorStartForbidden.status).toBe(403);
+
+    // 2. Admin starts auction item 'auc-b2-1' (CloudScale Dynamics)
     const startRes = await request(app)
       .post('/api/auction/staff/start-item')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        itemId: 'auc-company-1',
+        id: 'auc-b2-1',
         name: 'CloudScale Dynamics',
         description: 'Premier infrastructure and distributed systems partner.',
-        startingBid: 200,
-        minIncrement: 50,
+        basePrice: 200,
       });
     expect(startRes.status).toBe(200);
     expect(startRes.body.liveAuction.status).toBe('bidding');
 
-    // 2. Public observer views live auction floor
+    // 3. Public observer views live auction floor
     const publicViewRes = await request(app).get('/api/auction/live');
     expect(publicViewRes.status).toBe(200);
     expect(publicViewRes.body.liveAuction.activeItem.name).toBe('CloudScale Dynamics');
     expect(publicViewRes.body.liveAuction.currentBid).toBe(200);
 
-    // 3. Team Beta places a bid of 300
+    // 4. Team Beta places a bid of 300
     const bidResB = await request(app)
       .post('/api/auction/bid')
       .set('Authorization', `Bearer ${leaderTokenB}`)
@@ -525,7 +579,7 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(bidResB.body.liveAuction.currentBid).toBe(300);
     expect(bidResB.body.liveAuction.highestBidderTeamName).toBe('Workflow Team Beta');
 
-    // 4. Team Alpha outbids with 400
+    // 5. Team Alpha outbids with 400
     const bidResA = await request(app)
       .post('/api/auction/bid')
       .set('Authorization', `Bearer ${leaderTokenA}`)
@@ -534,7 +588,14 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(bidResA.body.liveAuction.currentBid).toBe(400);
     expect(bidResA.body.liveAuction.highestBidderTeamName).toBe('Workflow Team Alpha');
 
-    // 5. Admin assigns auction company directly to Team Alpha
+    // 5b. Evaluator is forbidden from assigning companies (admin only)
+    const evaluatorAssignForbidden = await request(app)
+      .post('/api/auction/staff/assign')
+      .set('Authorization', `Bearer ${evaluatorToken}`)
+      .send({ teamId: teamA._id.toString() });
+    expect(evaluatorAssignForbidden.status).toBe(403);
+
+    // 6. Admin assigns auction company directly to Team Alpha
     const assignRes = await request(app)
       .post('/api/auction/staff/assign')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -543,23 +604,84 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(assignRes.body.assignedTeamName).toBe('Workflow Team Alpha');
     expect(assignRes.body.liveAuction.status).toBe('sold');
 
-    // Verify auction company assignment was recorded in winner's QuizScore
-    const winnerQuizScore = await QuizScore.findOne({ teamId: teamA._id });
-    expect(winnerQuizScore).toBeDefined();
-    expect(winnerQuizScore?.assignedCompanies?.auctionCompany?.name).toBe('CloudScale Dynamics');
-    expect(winnerQuizScore?.assignedCompanies?.auctionCompany?.price).toBe(400);
+    // 7. Admin oversight: Check assignments roster
+    const assignmentsRes = await request(app)
+      .get('/api/auction/staff/assignments')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(assignmentsRes.status).toBe(200);
+    const alphaAssignment = assignmentsRes.body.assignments.find((a: any) => a.teamName === 'Workflow Team Alpha');
+    expect(alphaAssignment).toBeDefined();
+    expect(alphaAssignment.auctionCompany.name).toBe('CloudScale Dynamics');
+
+    // 7b. Evaluator is forbidden from reassigning companies (admin only)
+    const evaluatorReassignForbidden = await request(app)
+      .post('/api/auction/staff/reassign')
+      .set('Authorization', `Bearer ${evaluatorToken}`)
+      .send({
+        teamId: teamA._id.toString(),
+        companyId: 'auc-b2-2',
+      });
+    expect(evaluatorReassignForbidden.status).toBe(403);
+
+    // 8. Admin reassigns / changes company if required
+    const reassignRes = await request(app)
+      .post('/api/auction/staff/reassign')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        teamId: teamA._id.toString(),
+        companyId: 'auc-b2-2',
+        companyName: 'Quantum Core',
+        companyDescription: 'Fault-tolerant quantum computing systems.',
+        price: 250,
+      });
+    expect(reassignRes.status).toBe(200);
+    expect(reassignRes.body.assignedCompany.name).toBe('Quantum Core');
+
+    // 9. Team Alpha can still view live auction floor even after securing both companies
+    const viewAfterSecured = await request(app)
+      .get('/api/auction/live')
+      .set('Authorization', `Bearer ${leaderTokenA}`);
+    expect(viewAfterSecured.status).toBe(200);
+    expect(viewAfterSecured.body.liveAuction).toBeDefined();
   });
 
-  it('9. Final Project Pitch: Unlocked when 2 companies assigned and graded by mentors', async () => {
-    // 1. Team Alpha now has 2 companies: Nexus Cybernetics (Queue 1) and CloudScale Dynamics (Auction)
+  it('9. Final Project Pitch: Admin enables final submission gate after auction concludes', async () => {
+    // 1. Team Alpha has 2 companies: Nexus Cybernetics (Queue 1) and Quantum Core (Auction)
     const currentRes = await request(app)
       .get('/api/submissions/current')
       .set('Authorization', `Bearer ${leaderTokenA}`);
     expect(currentRes.status).toBe(200);
     expect(currentRes.body.assignedCompanies.length).toBe(2);
     expect(currentRes.body.hasSelectedTwoCompanies).toBe(true);
+    expect(currentRes.body.finalSubmissionOpen).toBe(false);
 
-    // 2. Team Alpha submits their Final Project Pitch
+    // 2. Submission should fail while admin has not opened final submissions
+    const blockedSubmitRes = await request(app)
+      .post('/api/submissions/submit')
+      .set('Authorization', `Bearer ${leaderTokenA}`)
+      .send({
+        stage: 'final-submission',
+        payload: {
+          productName: 'CyberScale Core Engine',
+          productDescription: 'Unified autonomous security monitoring integrating Nexus AI and Quantum infrastructure.',
+          prototypeUrl: 'https://cyberscale-demo.vercel.app',
+          githubUrl: 'https://github.com/iste-workflow/cyberscale-core',
+        },
+      });
+    expect(blockedSubmitRes.status).toBe(403);
+    expect(blockedSubmitRes.body.error).toBe('Submissions Closed');
+
+    // 3. Admin enables final stage submission gate and empties bidding floor
+    const openGateRes = await request(app)
+      .post('/api/admin/config/final-submission-toggle')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ open: true });
+    expect(openGateRes.status).toBe(200);
+    expect(openGateRes.body.finalSubmissionOpen).toBe(true);
+    expect(openGateRes.body.liveAuction.status).toBe('idle');
+    expect(openGateRes.body.liveAuction.activeItem).toBeNull();
+
+    // 4. Team Alpha submits their Final Project Pitch
     const finalSubmitRes = await request(app)
       .post('/api/submissions/submit')
       .set('Authorization', `Bearer ${leaderTokenA}`)
@@ -567,7 +689,7 @@ describe('Full Synapse 2026 Event Workflow', () => {
         stage: 'final-submission',
         payload: {
           productName: 'CyberScale Core Engine',
-          productDescription: 'Unified autonomous security monitoring integrating Nexus AI and CloudScale infrastructure.',
+          productDescription: 'Unified autonomous security monitoring integrating Nexus AI and Quantum infrastructure.',
           prototypeUrl: 'https://cyberscale-demo.vercel.app',
           githubUrl: 'https://github.com/iste-workflow/cyberscale-core',
         },
@@ -576,7 +698,7 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(finalSubmitRes.body.submission.stage).toBe('final-submission');
     expect(finalSubmitRes.body.submission.payload.productName).toBe('CyberScale Core Engine');
 
-    // 3. Mentors & Evaluators can access and review final submissions
+    // 5. Mentors & Evaluators can access and review final submissions
     const finalSubsRes = await request(app)
       .get('/api/mentor/final-submissions')
       .set('Authorization', `Bearer ${mentorToken}`);
@@ -585,5 +707,55 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(alphaFinal).toBeDefined();
     expect(alphaFinal.productName).toBe('CyberScale Core Engine');
     expect(alphaFinal.assignedCompanies.length).toBe(2);
+  });
+
+  it('10. Grand Finale: Admin announces winners and public podium curtain activates', async () => {
+    // 1. Initial state: winners are not announced
+    const initialWinners = await request(app).get('/api/leaderboard/winners');
+    expect(initialWinners.status).toBe(200);
+    expect(initialWinners.body.announced).toBe(false);
+
+    // 2. Admin announces winners with explicit Top 3 podium (Rank 1, 2, 3)
+    const announceRes = await request(app)
+      .post('/api/admin/config/winners-toggle')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        announced: true,
+        winners: [
+          {
+            rank: 1,
+            teamId: teamA._id.toString(),
+            teamName: teamA.teamName,
+            college: 'Engineering Institute',
+            score: 95.5,
+            prizeTitle: 'Synapse 2026 Champion',
+          },
+          {
+            rank: 2,
+            teamId: teamB._id.toString(),
+            teamName: teamB.teamName,
+            college: 'Technology Campus',
+            score: 89.0,
+            prizeTitle: 'First Runner Up',
+          },
+        ],
+      });
+    expect(announceRes.status).toBe(200);
+    expect(announceRes.body.winnersAnnouncement.announced).toBe(true);
+    expect(announceRes.body.winnersAnnouncement.winners.length).toBe(2);
+
+    // 3. Public visitor retrieves announced winners for the 2 1 3 podium
+    const publicPodiumRes = await request(app).get('/api/leaderboard/winners');
+    expect(publicPodiumRes.status).toBe(200);
+    expect(publicPodiumRes.body.announced).toBe(true);
+    expect(publicPodiumRes.body.winners.find((w: any) => w.rank === 1).teamName).toBe('Workflow Team Alpha');
+    expect(publicPodiumRes.body.winners.find((w: any) => w.rank === 2).teamName).toBe('Workflow Team Beta');
+
+    // 4. Non-admin is forbidden from toggling winners
+    const mentorForbiddenToggle = await request(app)
+      .post('/api/admin/config/winners-toggle')
+      .set('Authorization', `Bearer ${mentorToken}`)
+      .send({ announced: false });
+    expect(mentorForbiddenToggle.status).toBe(403);
   });
 });

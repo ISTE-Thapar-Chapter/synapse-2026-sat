@@ -6,7 +6,7 @@ import { Team } from '../models/Team.js';
 import { RoundRobinQueue } from '../models/RoundRobinQueue.js';
 import { CompanyAssignment } from '../models/CompanyAssignment.js';
 import { logAudit } from '../services/auditService.js';
-import { BatchQuizScoreSchema, AuctionBidSubmitSchema } from '../schemas/validation.js';
+import { BatchQuizScoreSchema, AuctionBidSubmitSchema, BatchAuctionCompaniesSchema, AuctionReassignSchema } from '../schemas/validation.js';
 
 const router = Router();
 
@@ -29,6 +29,81 @@ router.get('/live', async (req: Request, res: Response, next: NextFunction) => {
         bidHistory: [],
       },
       quizMultiplier: config.quizMultiplier || 100,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Public route: Get all Bucket 2 auction companies
+ */
+router.get('/companies', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    // Seed defaults if empty
+    if (!config.auctionCompanies || config.auctionCompanies.length === 0) {
+      config.auctionCompanies = [
+        { id: 'auc_1', name: 'DeepMind Robotics', description: 'Autonomous decision-making and spatial robotics foundation.', basePrice: 50, isAssigned: false },
+        { id: 'auc_2', name: 'OpenAI Infrastructure', description: 'Large-scale distributed systems and high-throughput model inference.', basePrice: 50, isAssigned: false },
+        { id: 'auc_3', name: 'Anthropic Safety Systems', description: 'Constitutional alignment and interpretability tooling partner.', basePrice: 50, isAssigned: false },
+        { id: 'auc_4', name: 'Databricks Lakehouse', description: 'Unified analytics and multi-cloud data orchestration platform.', basePrice: 50, isAssigned: false },
+        { id: 'auc_5', name: 'Stripe Global Financials', description: 'Mission-critical payment rails and real-time fraud mitigation.', basePrice: 50, isAssigned: false },
+        { id: 'auc_6', name: 'Snowflake Quantum Data', description: 'Autonomous data sharing, indexing, and elastic cloud computation.', basePrice: 50, isAssigned: false },
+      ];
+      await config.save();
+    }
+
+    return res.json({
+      companies: config.auctionCompanies,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Admin route: Update Bucket 2 auction companies (add/edit/delete)
+ */
+router.put('/companies', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = BatchAuctionCompaniesSchema.parse(req.body);
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    const existingMap = new Map((config.auctionCompanies || []).map((c) => [c.id, c]));
+
+    const updatedCompanies = parsed.companies.map((c, idx) => {
+      const id = c.id || `auc_${Date.now()}_${idx}`;
+      const existing = existingMap.get(id);
+      return {
+        id,
+        name: c.name.trim(),
+        description: c.description.trim(),
+        basePrice: c.basePrice || 0,
+        isAssigned: existing?.isAssigned || false,
+        assignedToTeamId: existing?.assignedToTeamId || null,
+        assignedToTeamName: existing?.assignedToTeamName || null,
+        assignedAt: existing?.assignedAt || null,
+      };
+    });
+
+    config.auctionCompanies = updatedCompanies;
+    await config.save();
+
+    await logAudit(
+      req.user!.email,
+      'AUCTION_COMPANIES_UPDATED',
+      'CompetitionConfig',
+      config._id.toString(),
+      { count: updatedCompanies.length }
+    );
+
+    return res.json({
+      message: 'Auction companies (Bucket 2) updated successfully.',
+      companies: config.auctionCompanies,
     });
   } catch (err) {
     next(err);
@@ -63,8 +138,6 @@ router.get('/my-balance', requireAuth, async (req: Request, res: Response, next:
       hasTeam: true,
       teamId: team._id,
       teamName: team.teamName,
-      quizMarks: quizScore.quizMarks,
-      multiplier: quizScore.multiplier,
       auctionBalance: quizScore.auctionBalance,
       initialTokens: quizScore.auctionBalance,
       balance: quizScore.remainingBalance,
@@ -270,9 +343,68 @@ router.post('/staff/quiz-scores', requireAuth, requireRole(['evaluator', 'admin'
 });
 
 /**
- * Start auction on a company item (Bucket 2)
+ * Single team quiz score update (Evaluators and Admins)
  */
-router.post('/staff/start-item', requireAuth, requireRole(['evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/staff/quiz-score/:teamId', requireAuth, requireRole(['evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { teamId } = req.params;
+    const { quizMarks, multiplier } = req.body;
+    const marks = Math.max(0, Number(quizMarks) || 0);
+
+    const team = await Team.findById(teamId);
+    if (!team) {
+      return res.status(404).json({ error: 'Team Not Found', message: 'Team does not exist.' });
+    }
+
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+    const rate = Number(multiplier) || config.quizMultiplier || 100;
+    if (multiplier && Number(multiplier) !== config.quizMultiplier) {
+      config.quizMultiplier = Number(multiplier);
+      await config.save();
+    }
+
+    const balance = Math.round(marks * rate);
+
+    let qs = await QuizScore.findOne({ teamId: team._id });
+    if (!qs) {
+      qs = new QuizScore({ teamId: team._id, teamName: team.teamName });
+    }
+    qs.teamName = team.teamName;
+    qs.quizMarks = marks;
+    qs.multiplier = rate;
+    qs.auctionBalance = balance;
+    qs.remainingBalance = Math.max(0, balance - (qs.spentTokens || 0));
+    await qs.save();
+
+    await logAudit(
+      req.user!.email,
+      'QUIZ_SCORE_UPDATED_SINGLE',
+      'QuizScore',
+      qs._id.toString(),
+      { teamId, teamName: team.teamName, marks, rate }
+    );
+
+    return res.json({
+      message: `Score updated for ${team.teamName}.`,
+      score: {
+        teamId: team._id.toString(),
+        teamName: team.teamName,
+        quizMarks: marks,
+        auctionBalance: qs.auctionBalance,
+        spentTokens: qs.spentTokens || 0,
+        remainingBalance: qs.remainingBalance,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Start auction on a company item (Bucket 2 - Admin only)
+ */
+router.post('/staff/start-item', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const itemId = req.body.id || req.body.itemId || `comp_${Date.now()}`;
     const name = req.body.name;
@@ -322,9 +454,9 @@ router.post('/staff/start-item', requireAuth, requireRole(['evaluator', 'admin']
 });
 
 /**
- * Admin assigns the current auction company directly to a team
+ * Admin assigns the current auction company directly to a team (Admin only)
  */
-router.post('/staff/assign', requireAuth, requireRole(['evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/staff/assign', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { teamId } = req.body;
     if (!teamId) {
@@ -345,6 +477,15 @@ router.post('/staff/assign', requireAuth, requireRole(['evaluator', 'admin']), a
     config.liveAuction.status = 'sold';
     config.liveAuction.highestBidderTeamId = winnerTeam._id as any;
     config.liveAuction.highestBidderTeamName = winnerTeam.teamName;
+
+    // Also mark matching company as assigned in config.auctionCompanies
+    const matchComp = (config.auctionCompanies || []).find((c) => c.id === activeItem.id || c.name.toLowerCase() === activeItem.name.toLowerCase());
+    if (matchComp) {
+      matchComp.isAssigned = true;
+      matchComp.assignedToTeamId = winnerTeam._id as any;
+      matchComp.assignedToTeamName = winnerTeam.teamName;
+      matchComp.assignedAt = new Date();
+    }
     await config.save();
 
     let quizScore = await QuizScore.findOne({ teamId: winnerTeam._id });
@@ -381,9 +522,9 @@ router.post('/staff/assign', requireAuth, requireRole(['evaluator', 'admin']), a
 });
 
 /**
- * Pause / Resume live auction
+ * Pause / Resume live auction (Admin only)
  */
-router.post('/staff/pause', requireAuth, requireRole(['evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/staff/pause', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     let config = await CompetitionConfig.findOne();
     if (!config || !config.liveAuction) {
@@ -405,9 +546,9 @@ router.post('/staff/pause', requireAuth, requireRole(['evaluator', 'admin']), as
 });
 
 /**
- * Finalize / Hammer auction item
+ * Finalize / Hammer auction item (Admin only)
  */
-router.post('/staff/finalize', requireAuth, requireRole(['evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/staff/finalize', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
     let config = await CompetitionConfig.findOne();
     if (!config || !config.liveAuction || !config.liveAuction.activeItem) {
@@ -468,6 +609,17 @@ router.post('/staff/finalize', requireAuth, requireRole(['evaluator', 'admin']),
     }
 
     liveAuction.status = 'sold';
+
+    // Also mark matching company as assigned in config.auctionCompanies
+    if (activeItem && winnerTeamId) {
+      const matchComp = (config.auctionCompanies || []).find((c) => c.id === activeItem.id || c.name.toLowerCase() === activeItem.name.toLowerCase());
+      if (matchComp) {
+        matchComp.isAssigned = true;
+        matchComp.assignedToTeamId = winnerTeamId as any;
+        matchComp.assignedToTeamName = liveAuction.highestBidderTeamName;
+        matchComp.assignedAt = new Date();
+      }
+    }
     await config.save();
 
     await logAudit(
@@ -485,6 +637,175 @@ router.post('/staff/finalize', requireAuth, requireRole(['evaluator', 'admin']),
     return res.json({
       message: `Auction for ${activeItem.name} completed successfully. Sold to ${liveAuction.highestBidderTeamName || 'None'} for ${winningBid} tokens.`,
       liveAuction: config.liveAuction,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Get all team assignments and balances for staff oversight
+ */
+router.get('/staff/assignments', requireAuth, requireRole(['evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const teams = await Team.find({ disqualified: false }).sort({ teamName: 1 });
+    const quizScores = await QuizScore.find();
+    const qsMap = new Map<string, any>(quizScores.map((q) => [q.teamId.toString(), q]));
+
+    const q1 = await RoundRobinQueue.findOne({ queueNumber: 1 });
+    const q1Map = new Map<string, any>();
+    if (q1) {
+      for (const t of q1.teams) {
+        if (t.hasSelected && t.selectedCompanyName) {
+          q1Map.set(t.teamId.toString(), {
+            id: t.selectedCompanyId,
+            name: t.selectedCompanyName,
+            description: t.selectedCompanyDescription,
+            selectedAt: t.selectedAt,
+          });
+        }
+      }
+    }
+
+    const assignments = teams.map((team) => {
+      const qs = qsMap.get(team._id.toString());
+      const r1Comp = q1Map.get(team._id.toString()) || qs?.assignedCompanies?.queue1Company || null;
+      const aucComp = qs?.assignedCompanies?.auctionCompany || null;
+
+      return {
+        teamId: team._id,
+        teamName: team.teamName,
+        quizMarks: qs?.quizMarks || 0,
+        auctionBalance: qs?.auctionBalance || 0,
+        spentTokens: qs?.spentTokens || 0,
+        remainingBalance: qs?.remainingBalance || 0,
+        roundRobinCompany: r1Comp,
+        auctionCompany: aucComp,
+        hasBothCompanies: !!(r1Comp && aucComp),
+      };
+    });
+
+    return res.json({
+      assignments,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Admin change / reassign an auction company for a team (Admin only)
+ */
+router.post('/staff/reassign', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { teamId, companyId, companyName, companyDescription, price } = AuctionReassignSchema.parse(req.body);
+
+    const team = await Team.findById(teamId);
+    if (!team) {
+      return res.status(404).json({ error: 'Team Not Found', message: 'Team does not exist.' });
+    }
+
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    let quizScore = await QuizScore.findOne({ teamId: team._id });
+    if (!quizScore) {
+      quizScore = new QuizScore({ teamId: team._id, teamName: team.teamName });
+    }
+
+    // Unassign if companyId is null or empty
+    if (!companyId) {
+      const prevComp = quizScore.assignedCompanies?.auctionCompany;
+      if (prevComp) {
+        const found = (config.auctionCompanies || []).find((c) => c.id === prevComp.id || c.name === prevComp.name);
+        if (found) {
+          found.isAssigned = false;
+          found.assignedToTeamId = null;
+          found.assignedToTeamName = null;
+          found.assignedAt = null;
+        }
+      }
+      quizScore.assignedCompanies = quizScore.assignedCompanies || {};
+      quizScore.assignedCompanies.auctionCompany = null;
+      quizScore.markModified('assignedCompanies');
+      await quizScore.save();
+      await config.save();
+
+      await logAudit(
+        req.user!.email,
+        'AUCTION_COMPANY_UNASSIGNED',
+        'Team',
+        team._id.toString(),
+        { teamName: team.teamName }
+      );
+
+      return res.json({
+        message: `Auction company removed for team ${team.teamName}.`,
+        teamId: team._id,
+        auctionCompany: null,
+      });
+    }
+
+    // Find company in Bucket 2 or use provided details
+    let targetComp = (config.auctionCompanies || []).find((c) => c.id === companyId);
+    const finalName = companyName || targetComp?.name || 'Assigned Partner';
+    const finalDesc = companyDescription || targetComp?.description || '';
+    const finalPrice = typeof price === 'number' ? price : (targetComp?.basePrice || 0);
+
+    // Unassign old company in config.auctionCompanies if team had a different one
+    const prevComp = quizScore.assignedCompanies?.auctionCompany;
+    if (prevComp && prevComp.id !== companyId) {
+      const oldMatch = (config.auctionCompanies || []).find((c) => c.id === prevComp.id);
+      if (oldMatch) {
+        oldMatch.isAssigned = false;
+        oldMatch.assignedToTeamId = null;
+        oldMatch.assignedToTeamName = null;
+        oldMatch.assignedAt = null;
+      }
+    }
+
+    // If targetComp was held by another team, clear it from that team's QuizScore
+    if (targetComp && targetComp.assignedToTeamId && targetComp.assignedToTeamId.toString() !== team._id.toString()) {
+      const otherQs = await QuizScore.findOne({ teamId: targetComp.assignedToTeamId });
+      if (otherQs && otherQs.assignedCompanies?.auctionCompany?.id === targetComp.id) {
+        otherQs.assignedCompanies.auctionCompany = null;
+        otherQs.markModified('assignedCompanies');
+        await otherQs.save();
+      }
+    }
+
+    // Mark as assigned in config.auctionCompanies
+    if (targetComp) {
+      targetComp.isAssigned = true;
+      targetComp.assignedToTeamId = team._id as any;
+      targetComp.assignedToTeamName = team.teamName;
+      targetComp.assignedAt = new Date();
+    }
+
+    quizScore.assignedCompanies = quizScore.assignedCompanies || {};
+    quizScore.assignedCompanies.auctionCompany = {
+      id: companyId,
+      name: finalName,
+      description: finalDesc,
+      price: finalPrice,
+      wonAt: new Date(),
+    };
+    quizScore.markModified('assignedCompanies');
+    await quizScore.save();
+    await config.save();
+
+    await logAudit(
+      req.user!.email,
+      'AUCTION_COMPANY_REASSIGNED',
+      'Team',
+      team._id.toString(),
+      { companyName: finalName, teamName: team.teamName, price: finalPrice }
+    );
+
+    return res.json({
+      message: `Successfully assigned "${finalName}" to team "${team.teamName}".`,
+      teamId: team._id,
+      assignedCompany: quizScore.assignedCompanies.auctionCompany,
     });
   } catch (err) {
     next(err);

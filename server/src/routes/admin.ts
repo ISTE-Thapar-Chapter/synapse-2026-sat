@@ -15,12 +15,14 @@ import { EventStage } from '../models/EventStage.js';
 import { AuditLog } from '../models/AuditLog.js';
 import { ImportService } from '../services/importService.js';
 import { logAudit } from '../services/auditService.js';
+import { LeaderboardService } from '../services/leaderboardService.js';
 import {
   AccountCreateSchema,
   AccountRoleUpdateSchema,
   ManualTeamCreateSchema,
   ToggleRestrictionSchema,
   ToggleDisqualificationSchema,
+  WinnersAnnouncementToggleSchema,
 } from '../schemas/validation.js';
 
 const upload = multer({
@@ -727,6 +729,8 @@ router.patch('/config', async (req: Request, res: Response, next: NextFunction) 
     }
     if (typeof leaderboardVisible === 'boolean') config.leaderboardVisible = leaderboardVisible;
     if (typeof quizMultiplier === 'number') config.quizMultiplier = quizMultiplier;
+    if (typeof req.body.finalSubmissionOpen === 'boolean') config.finalSubmissionOpen = req.body.finalSubmissionOpen;
+    if (req.body.auctionCompanies !== undefined) config.auctionCompanies = req.body.auctionCompanies;
 
     await config.save();
 
@@ -759,6 +763,100 @@ router.post('/config/leaderboard-visibility', async (req: Request, res: Response
     return res.json({
       message: `Leaderboard visibility is now ${config.leaderboardVisible ? 'visible' : 'hidden'}.`,
       leaderboardVisible: config.leaderboardVisible,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/config/final-submission-toggle', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { open } = req.body;
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    config.finalSubmissionOpen = typeof open === 'boolean' ? open : !config.finalSubmissionOpen;
+
+    // When final pitch is opened, bidding is emptied and live auction is cleared
+    if (config.finalSubmissionOpen) {
+      config.liveAuction = {
+        activeItem: null,
+        status: 'idle',
+        currentBid: 0,
+        highestBidderTeamId: null,
+        highestBidderTeamName: null,
+        bidHistory: [],
+      };
+    }
+
+    await config.save();
+
+    await logAudit(req.user!.email, 'FINAL_SUBMISSION_TOGGLED', 'CompetitionConfig', config._id.toString(), {
+      finalSubmissionOpen: config.finalSubmissionOpen,
+      auctionEmptied: config.finalSubmissionOpen,
+    });
+
+    return res.json({
+      message: `Final pitch submissions are now ${config.finalSubmissionOpen ? 'open' : 'closed'}.`,
+      finalSubmissionOpen: config.finalSubmissionOpen,
+      liveAuction: config.liveAuction,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Announce or update competition winners (Ranked 1, 2, 3)
+ */
+router.post('/config/winners-toggle', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = WinnersAnnouncementToggleSchema.parse(req.body);
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    const isAnnounced = typeof parsed.announced === 'boolean'
+      ? parsed.announced
+      : !(config.winnersAnnouncement?.announced);
+
+    let resolvedWinners = parsed.winners;
+    if (isAnnounced && (!resolvedWinners || resolvedWinners.length === 0)) {
+      // Auto-resolve top 3 from leaderboard if none provided
+      const live = await LeaderboardService.calculateLiveLeaderboard();
+      const top3 = (live.entries || []).slice(0, 3);
+      resolvedWinners = top3.map((entry: any, idx: number) => ({
+        rank: (idx + 1) as 1 | 2 | 3,
+        teamId: entry.teamId.toString(),
+        teamName: entry.teamName,
+        college: entry.college || '',
+        score: entry.score || 0,
+        prizeTitle: idx === 0 ? 'Synapse 2026 Champion' : idx === 1 ? 'First Runner Up' : 'Second Runner Up',
+      }));
+    }
+
+    config.winnersAnnouncement = {
+      announced: isAnnounced,
+      announcedAt: isAnnounced ? (config.winnersAnnouncement?.announcedAt || new Date()) : null,
+      winners: (resolvedWinners || []).map((w) => ({
+        rank: w.rank as 1 | 2 | 3,
+        teamId: new mongoose.Types.ObjectId(w.teamId),
+        teamName: w.teamName,
+        college: w.college || '',
+        score: w.score || 0,
+        prizeTitle: w.prizeTitle || '',
+      })),
+    };
+    config.markModified('winnersAnnouncement');
+    await config.save();
+
+    await logAudit(req.user!.email, 'WINNERS_ANNOUNCEMENT_TOGGLED', 'CompetitionConfig', config._id.toString(), {
+      announced: isAnnounced,
+      winnersCount: config.winnersAnnouncement.winners.length,
+    });
+
+    return res.json({
+      message: isAnnounced ? 'Winners have been announced and published to all attendees!' : 'Winners announcement has been hidden.',
+      winnersAnnouncement: config.winnersAnnouncement,
     });
   } catch (err) {
     next(err);

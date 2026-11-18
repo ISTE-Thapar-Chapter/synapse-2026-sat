@@ -139,6 +139,32 @@ export interface FeatureDefinition {
   expectedCompany: string;
 }
 
+export interface AuctionCompanyItem {
+  id: string;
+  name: string;
+  description: string;
+  basePrice: number;
+  isAssigned?: boolean;
+  assignedToTeamId?: string | null;
+  assignedToTeamName?: string | null;
+  assignedAt?: string | null;
+}
+
+export interface WinnerPodiumItem {
+  rank: 1 | 2 | 3;
+  teamId: string;
+  teamName: string;
+  college?: string;
+  score?: number;
+  prizeTitle?: string;
+}
+
+export interface WinnersAnnouncement {
+  announced: boolean;
+  announcedAt?: string | null;
+  winners: WinnerPodiumItem[];
+}
+
 export interface CompetitionConfig {
   _id: string;
   isEventStarted?: boolean;
@@ -151,6 +177,9 @@ export interface CompetitionConfig {
   leaderboardVisible?: boolean;
   quizMultiplier?: number;
   liveAuction?: LiveAuctionState;
+  auctionCompanies?: AuctionCompanyItem[];
+  finalSubmissionOpen?: boolean;
+  winnersAnnouncement?: WinnersAnnouncement;
 }
 
 export interface FeatureSetSubmissionItem {

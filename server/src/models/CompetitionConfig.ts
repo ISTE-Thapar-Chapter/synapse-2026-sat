@@ -29,6 +29,32 @@ export interface IFeatureDefinition {
   expectedCompany: string;
 }
 
+export interface IAuctionCompanyItem {
+  id: string;
+  name: string;
+  description: string;
+  basePrice: number;
+  isAssigned?: boolean;
+  assignedToTeamId?: mongoose.Types.ObjectId | null;
+  assignedToTeamName?: string | null;
+  assignedAt?: Date | null;
+}
+
+export interface IWinnerPodiumItem {
+  rank: 1 | 2 | 3;
+  teamId: mongoose.Types.ObjectId | string;
+  teamName: string;
+  college?: string;
+  score?: number;
+  prizeTitle?: string;
+}
+
+export interface IWinnersAnnouncement {
+  announced: boolean;
+  announcedAt: Date | null;
+  winners: IWinnerPodiumItem[];
+}
+
 export interface ICompetitionConfig extends Document {
   isEventStarted: boolean;
   eventStartedAt: Date | null;
@@ -40,6 +66,9 @@ export interface ICompetitionConfig extends Document {
   leaderboardVisible: boolean;
   quizMultiplier: number;
   liveAuction: ILiveAuctionState;
+  auctionCompanies: IAuctionCompanyItem[];
+  finalSubmissionOpen: boolean;
+  winnersAnnouncement?: IWinnersAnnouncement;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -115,6 +144,36 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
           teamName: { type: String, required: true },
           amount: { type: Number, required: true },
           timestamp: { type: Date, default: Date.now },
+        },
+      ],
+    },
+    auctionCompanies: [
+      {
+        id: { type: String, required: true },
+        name: { type: String, required: true, trim: true },
+        description: { type: String, required: true, trim: true },
+        basePrice: { type: Number, default: 0 },
+        isAssigned: { type: Boolean, default: false },
+        assignedToTeamId: { type: Schema.Types.ObjectId, ref: 'Team', default: null },
+        assignedToTeamName: { type: String, default: null },
+        assignedAt: { type: Date, default: null },
+      },
+    ],
+    finalSubmissionOpen: {
+      type: Boolean,
+      default: false,
+    },
+    winnersAnnouncement: {
+      announced: { type: Boolean, default: false },
+      announcedAt: { type: Date, default: null },
+      winners: [
+        {
+          rank: { type: Number, required: true },
+          teamId: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
+          teamName: { type: String, required: true },
+          college: { type: String, default: '' },
+          score: { type: Number, default: 0 },
+          prizeTitle: { type: String, default: '' },
         },
       ],
     },

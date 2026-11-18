@@ -184,3 +184,40 @@ export const CompaniesUpdateSchema = z.object({
 export const CompanySelectSchema = z.object({
   companyId: z.string().min(1, 'Company ID is required'),
 });
+
+export const AuctionCompanyItemSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(2, 'Company name is required'),
+  description: z.string().min(5, 'Description must be at least 5 characters'),
+  basePrice: z.number().min(0, 'Base price cannot be negative').optional().default(0),
+});
+
+export const BatchAuctionCompaniesSchema = z.object({
+  companies: z.array(AuctionCompanyItemSchema),
+});
+
+export const AuctionReassignSchema = z.object({
+  teamId: z.string().min(1, 'Team ID is required'),
+  companyId: z.string().optional().nullable(),
+  companyName: z.string().optional(),
+  companyDescription: z.string().optional(),
+  price: z.number().min(0).optional(),
+});
+
+export const FinalSubmissionToggleSchema = z.object({
+  open: z.boolean(),
+});
+
+export const WinnerPodiumItemSchema = z.object({
+  rank: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  teamId: z.string().min(1, 'Team ID is required'),
+  teamName: z.string().min(1, 'Team name is required'),
+  college: z.string().optional().default(''),
+  score: z.number().optional().default(0),
+  prizeTitle: z.string().optional().default(''),
+});
+
+export const WinnersAnnouncementToggleSchema = z.object({
+  announced: z.boolean().optional(),
+  winners: z.array(WinnerPodiumItemSchema).optional(),
+});

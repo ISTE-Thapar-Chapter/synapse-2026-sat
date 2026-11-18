@@ -44,6 +44,7 @@ export const TeamPortal: React.FC = () => {
   const [teamBalance, setTeamBalance] = useState<TeamAuctionBalance | null>(null);
   const [assignedCompanies, setAssignedCompanies] = useState<Array<{ id: string; name: string; description: string; source: string }>>([]);
   const [hasSelectedTwoCompanies, setHasSelectedTwoCompanies] = useState<boolean>(false);
+  const [finalSubmissionOpen, setFinalSubmissionOpen] = useState<boolean>(false);
 
   // Final Project Pitch State
   const [finalSubmission, setFinalSubmission] = useState<Submission | null>(null);
@@ -146,6 +147,7 @@ export const TeamPortal: React.FC = () => {
         requirements: string[];
         assignedCompanies?: Array<{ id: string; name: string; description: string; source: string }>;
         hasSelectedTwoCompanies?: boolean;
+        finalSubmissionOpen?: boolean;
       }>('/submissions/current');
 
       setIsEventStarted(!!data.isEventStarted);
@@ -159,6 +161,7 @@ export const TeamPortal: React.FC = () => {
       setRequirementsList(data.requirements || []);
       setAssignedCompanies(data.assignedCompanies || []);
       setHasSelectedTwoCompanies(!!data.hasSelectedTwoCompanies);
+      setFinalSubmissionOpen(!!data.finalSubmissionOpen);
 
       // Load team auction balance
       api.get<TeamAuctionBalance>('/auction/my-balance').then(setTeamBalance).catch(console.error);
@@ -404,6 +407,12 @@ export const TeamPortal: React.FC = () => {
     }, 3000);
     return () => clearInterval(interval);
   }, [teamId]);
+
+  useEffect(() => {
+    if (finalSubmissionOpen && !hasSubmittedFinal) {
+      setActiveSection('final');
+    }
+  }, [finalSubmissionOpen, hasSubmittedFinal]);
 
   // Handle section switch & persist in localStorage
   const handleSelectSection = (sec: 'cleaning' | 'requirements' | 'leaderboard' | 'companies' | 'final') => {
@@ -974,10 +983,10 @@ export const TeamPortal: React.FC = () => {
 
             {/* Step 5 Pill: Final Project Pitch */}
             <button
-              disabled={!hasSelectedTwoCompanies && !hasSubmittedFinal}
+              disabled={(!hasSelectedTwoCompanies || !finalSubmissionOpen) && !hasSubmittedFinal}
               onClick={() => handleSelectSection('final')}
               className={`flex-1 min-w-[180px] flex items-center gap-3 p-3 rounded-md text-left transition-all ${
-                !hasSelectedTwoCompanies && !hasSubmittedFinal
+                (!hasSelectedTwoCompanies || !finalSubmissionOpen) && !hasSubmittedFinal
                   ? 'opacity-50 cursor-not-allowed text-ink-muted'
                   : activeSection === 'final'
                   ? 'bg-ink text-white shadow-sm'
@@ -988,7 +997,7 @@ export const TeamPortal: React.FC = () => {
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
                   hasSubmittedFinal
                     ? 'bg-emerald-600 text-white'
-                    : hasSelectedTwoCompanies
+                    : hasSelectedTwoCompanies && finalSubmissionOpen
                     ? activeSection === 'final'
                       ? 'bg-signal text-white'
                       : 'bg-mist-dark text-ink'
@@ -997,7 +1006,7 @@ export const TeamPortal: React.FC = () => {
               >
                 {hasSubmittedFinal ? (
                   <CheckCircle2 className="w-4 h-4" />
-                ) : !hasSelectedTwoCompanies ? (
+                ) : !hasSelectedTwoCompanies || !finalSubmissionOpen ? (
                   <Lock className="w-3.5 h-3.5" />
                 ) : (
                   '5'
@@ -1013,7 +1022,9 @@ export const TeamPortal: React.FC = () => {
                   {hasSubmittedFinal
                     ? 'Submitted & Complete'
                     : !hasSelectedTwoCompanies
-                    ? 'Requires 2 Companies'
+                    ? 'Requires 2 Organizations'
+                    : !finalSubmissionOpen
+                    ? 'Awaiting Admin Launch'
                     : 'Ready for Pitch Submission'}
                 </div>
               </div>
@@ -1454,6 +1465,26 @@ export const TeamPortal: React.FC = () => {
                 )}
               </div>
 
+              {/* Team Available Auction Bidding Budget */}
+              {teamBalance && (
+                <div className="p-4 bg-paper rounded-xl border border-mist flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
+                  <div className="space-y-0.5">
+                    <span className="text-[11px] font-bold text-signal uppercase tracking-wider block">
+                      Your Available Auction Bidding Budget
+                    </span>
+                    <p className="text-ink-muted">
+                      Your allocated token budget for bidding on the live company auction floor.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-4 bg-white px-4 py-2 rounded-lg border border-mist shadow-xs">
+                    <div>
+                      <span className="text-[10px] text-ink-muted block uppercase font-bold">Available Bidding Budget</span>
+                      <span className="font-mono text-lg font-bold text-signal">{teamBalance.remainingBalance} Tokens</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <Card
                 title="Company Allocation Floor"
                 subtitle="Acquire two organizations: Pick from Bucket 1 in Round 1 (round robin), and bid in the Live Auction using quiz balance tokens"
@@ -1514,7 +1545,45 @@ export const TeamPortal: React.FC = () => {
                 </div>
 
                 {/* SubTab Content: Live Auction */}
-                {companySubTab === 'auction' ? (
+                {finalSubmissionOpen ? (
+                  <div className="p-8 bg-gradient-to-r from-signal/5 via-paper to-signal/5 rounded-xl border border-signal/20 text-center space-y-4">
+                    <div className="w-12 h-12 rounded-full bg-signal/10 border border-signal/20 flex items-center justify-center text-xl mx-auto">
+                      🏛️
+                    </div>
+                    <div className="space-y-1">
+                      <Badge variant="signal">Live Bidding Concluded</Badge>
+                      <h4 className="text-lg font-serif font-bold text-ink mt-2">
+                        Auction Concluded &bull; Final Pitch Phase Active
+                      </h4>
+                      <p className="text-xs text-ink-muted max-w-xl mx-auto leading-relaxed">
+                        Live bidding has ended and partner organization allocations are locked. Your team is now required to formulate and submit your final project pitch deliverables.
+                      </p>
+                    </div>
+
+                    {assignedCompanies && assignedCompanies.length > 0 && (
+                      <div className="max-w-xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3 text-left pt-2">
+                        {assignedCompanies.map((c, i) => (
+                          <div key={i} className="p-3 bg-white rounded-lg border border-mist shadow-xs">
+                            <span className="text-[10px] text-ink-muted uppercase font-bold block">
+                              {i === 0 ? 'Partner 1 (Round 1 Selection)' : 'Partner 2 (Live Auction Won)'}
+                            </span>
+                            <span className="font-bold text-xs text-ink mt-0.5 block">{c.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="pt-3">
+                      <Button
+                        variant="primary"
+                        onClick={() => handleSelectSection('final')}
+                        icon={<Send className="w-3.5 h-3.5" />}
+                      >
+                        Proceed to Final Project Pitch & Deliverables
+                      </Button>
+                    </div>
+                  </div>
+                ) : companySubTab === 'auction' ? (
                   <div className="space-y-4">
                     <LiveAuctionViewer />
                   </div>
@@ -1720,6 +1789,40 @@ export const TeamPortal: React.FC = () => {
                   </div>
                 )}
 
+                {!hasSubmittedFinal && !finalSubmissionOpen && (
+                  <div className="p-4 bg-amber-50 rounded-lg border border-amber-200 mb-6 flex items-center justify-between text-xs text-amber-900">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        <strong>Awaiting Launch:</strong> Final project pitch submissions have not been opened by administrators yet. Please wait until the company auction concludes.
+                      </span>
+                    </div>
+                    <Badge variant="saffron">Awaiting Launch</Badge>
+                  </div>
+                )}
+
+                {/* 2 Secured Partner Organizations Showcase */}
+                {assignedCompanies && assignedCompanies.length > 0 && (
+                  <div className="p-4 bg-paper rounded-xl border border-mist mb-6 space-y-3">
+                    <span className="text-[11px] font-bold text-signal uppercase tracking-wider block">
+                      Your Secured Partner Organizations for this Pitch
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {assignedCompanies.map((c, i) => (
+                        <div key={i} className="p-3.5 bg-white rounded-lg border border-mist flex flex-col justify-between shadow-xs">
+                          <div>
+                            <span className="text-[10px] text-ink-muted uppercase font-bold block">
+                              {i === 0 ? 'Partner 1 (Round 1 Selection)' : 'Partner 2 (Live Auction Won)'}
+                            </span>
+                            <h5 className="font-bold text-sm text-ink mt-0.5">{c.name}</h5>
+                            <p className="text-[11px] text-ink-muted mt-1 leading-relaxed">{c.description}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold text-ink uppercase mb-1">
@@ -1793,6 +1896,7 @@ export const TeamPortal: React.FC = () => {
                       <Button
                         variant="primary"
                         loading={submitting}
+                        disabled={!finalSubmissionOpen}
                         icon={<Send className="w-4 h-4" />}
                         onClick={() => {
                           setFinalSubmitError(null);

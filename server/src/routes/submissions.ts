@@ -175,6 +175,7 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       assignedCompanies,
       assignedCompany: assignedCompanies[0] || null,
       hasSelectedTwoCompanies,
+      finalSubmissionOpen: !!config.finalSubmissionOpen,
     });
   } catch (err) {
     next(err);
@@ -383,6 +384,13 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
         },
       };
     } else if (stage === 'final-submission') {
+      if (!config.finalSubmissionOpen) {
+        return res.status(403).json({
+          error: 'Submissions Closed',
+          message: 'Final project pitch submissions are not open yet. Administrators will enable submissions once the auction concludes.',
+        });
+      }
+
       const reqSub = await Submission.findOne({ stage: 'requirements', teamId: team._id, status: 'submitted' });
       if (!reqSub) {
         return res.status(400).json({
@@ -390,6 +398,24 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
           message: 'You must submit your feature identifications before submitting your final project.',
         });
       }
+
+      // Verify that team has selected both companies
+      let assignedCount = 0;
+      const q1 = await RoundRobinQueue.findOne({ queueNumber: 1 });
+      if (q1?.teams?.some((t) => t.teamId.toString() === team._id.toString() && t.hasSelected)) {
+        assignedCount++;
+      }
+      const qScore = await QuizScore.findOne({ teamId: team._id });
+      if (qScore?.assignedCompanies?.auctionCompany?.name) {
+        assignedCount++;
+      }
+      if (assignedCount < 2) {
+        return res.status(400).json({
+          error: 'Prerequisite Required',
+          message: 'Your team must acquire both partner organizations (Round 1 Selection and Auction) before submitting your final project pitch.',
+        });
+      }
+
       const parsedFinal = FinalProjectSubmissionSchema.parse(rawPayload.finalSubmission || rawPayload);
       validatedPayload = {
         ...parsedFinal,

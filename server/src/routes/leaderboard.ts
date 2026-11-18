@@ -129,4 +129,22 @@ router.post('/publish', requireAuth, requireRole(['admin']), async (req: Request
   }
 });
 
+/**
+ * Public route to get winners announcement and podium rankings
+ */
+router.get('/winners', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    return res.json({
+      announced: !!config.winnersAnnouncement?.announced,
+      announcedAt: config.winnersAnnouncement?.announcedAt || null,
+      winners: config.winnersAnnouncement?.winners || [],
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;

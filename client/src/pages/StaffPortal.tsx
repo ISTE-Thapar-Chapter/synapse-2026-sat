@@ -17,6 +17,7 @@ import {
   CompetitionConfig,
   AdminQueueState,
   CompanyPoolItem,
+  AuctionCompanyItem,
 } from '../types/index.js';
 import {
   ClipboardCheck,
@@ -44,6 +45,8 @@ import {
   Edit3,
   Gavel,
   DollarSign,
+  HelpCircle,
+  Save,
 } from 'lucide-react';
 
 export const StaffPortal: React.FC = () => {
@@ -63,7 +66,7 @@ export const StaffPortal: React.FC = () => {
   const isEvaluator = user?.role === 'evaluator';
 
   const [activeTab, setActiveTab] = useState<
-    'mentor' | 'auction' | 'evaluations' | 'config' | 'roundrobin' | 'imports' | 'teams' | 'accounts' | 'leaderboard' | 'audit'
+    'mentor' | 'quiz' | 'auction' | 'evaluations' | 'config' | 'roundrobin' | 'imports' | 'teams' | 'accounts' | 'leaderboard' | 'audit'
   >(isMentor ? 'mentor' : isAdmin ? 'config' : 'evaluations');
 
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -159,10 +162,15 @@ export const StaffPortal: React.FC = () => {
   }>>([]);
   const [mentorSubmitting, setMentorSubmitting] = useState<boolean>(false);
 
-  // Quiz Marks & Live Auction State
+  // Quiz Marks State (Evaluators & Admins)
   const [quizScores, setQuizScores] = useState<any[]>([]);
   const [quizMultiplier, setQuizMultiplier] = useState<number>(100);
   const [savingQuizScores, setSavingQuizScores] = useState<boolean>(false);
+  const [savingSingleTeamId, setSavingSingleTeamId] = useState<string | null>(null);
+  const [dirtyTeamIds, setDirtyTeamIds] = useState<Set<string>>(new Set());
+  const [quizLoading, setQuizLoading] = useState<boolean>(false);
+
+  // Live Auction State (Admin Only)
   const [liveAuctionState, setLiveAuctionState] = useState<any | null>(null);
   const [auctionItemName, setAuctionItemName] = useState<string>('');
   const [auctionItemDesc, setAuctionItemDesc] = useState<string>('');
@@ -170,8 +178,31 @@ export const StaffPortal: React.FC = () => {
   const [auctionActionLoading, setAuctionActionLoading] = useState<boolean>(false);
   const [selectedAssignTeamId, setSelectedAssignTeamId] = useState<string>('');
 
+  // Bucket 2 Auction Companies & Assignments State
+  const [auctionCompanies, setAuctionCompanies] = useState<AuctionCompanyItem[]>([]);
+  const [teamAssignments, setTeamAssignments] = useState<any[]>([]);
+  const [newAuctionCompName, setNewAuctionCompName] = useState<string>('');
+  const [newAuctionCompDesc, setNewAuctionCompDesc] = useState<string>('');
+  const [newAuctionCompPrice, setNewAuctionCompPrice] = useState<number>(50);
+  const [reassignModalTeam, setReassignModalTeam] = useState<any | null>(null);
+  const [reassignSelectedCompId, setReassignSelectedCompId] = useState<string>('');
+  const [editingCompId, setEditingCompId] = useState<string | null>(null);
+  const [editCompName, setEditCompName] = useState<string>('');
+  const [editCompDesc, setEditCompDesc] = useState<string>('');
+  const [editCompPrice, setEditCompPrice] = useState<number>(50);
+
   // Evaluation submission error
   const [evalSubmitError, setEvalSubmitError] = useState<string | null>(null);
+
+  // Winners Announcement & Podium State (Admin Only)
+  const [winnersAnnounced, setWinnersAnnounced] = useState<boolean>(false);
+  const [winnerRank1TeamId, setWinnerRank1TeamId] = useState<string>('');
+  const [winnerRank2TeamId, setWinnerRank2TeamId] = useState<string>('');
+  const [winnerRank3TeamId, setWinnerRank3TeamId] = useState<string>('');
+  const [winnerRank1Title, setWinnerRank1Title] = useState<string>('Synapse 2026 Champion');
+  const [winnerRank2Title, setWinnerRank2Title] = useState<string>('First Runner Up');
+  const [winnerRank3Title, setWinnerRank3Title] = useState<string>('Second Runner Up');
+  const [togglingWinners, setTogglingWinners] = useState<boolean>(false);
 
   // Accounts & Audit
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -216,6 +247,24 @@ export const StaffPortal: React.FC = () => {
         };
       });
       setFeatureDefs(mergedDefs);
+
+      setWinnersAnnounced(!!cfg.winnersAnnouncement?.announced);
+      const existingWinners = cfg.winnersAnnouncement?.winners || [];
+      const w1 = existingWinners.find((w) => w.rank === 1);
+      const w2 = existingWinners.find((w) => w.rank === 2);
+      const w3 = existingWinners.find((w) => w.rank === 3);
+      if (w1) {
+        setWinnerRank1TeamId(w1.teamId);
+        setWinnerRank1Title(w1.prizeTitle || 'Synapse 2026 Champion');
+      }
+      if (w2) {
+        setWinnerRank2TeamId(w2.teamId);
+        setWinnerRank2Title(w2.prizeTitle || 'First Runner Up');
+      }
+      if (w3) {
+        setWinnerRank3TeamId(w3.teamId);
+        setWinnerRank3Title(w3.prizeTitle || 'Second Runner Up');
+      }
     } catch (err) {
       console.error(err);
     }
@@ -368,10 +417,12 @@ export const StaffPortal: React.FC = () => {
     if (!user) return;
     if (activeTab === 'mentor') {
       loadMentorData();
+    } else if (activeTab === 'quiz') {
+      loadQuizScores();
     } else if (activeTab === 'auction') {
-      loadQuizAndAuctionData();
+      loadAuctionData();
       api.get<Team[]>('/admin/teams').then(setTeams).catch(console.error);
-      const interval = setInterval(loadQuizAndAuctionData, 4000);
+      const interval = setInterval(loadAuctionData, 4000);
       return () => clearInterval(interval);
     } else if (activeTab === 'evaluations') {
       loadQueue();
@@ -598,21 +649,39 @@ export const StaffPortal: React.FC = () => {
     }
   };
 
-  // Auction & Quiz Marks: Load data
-  const loadQuizAndAuctionData = async () => {
+  // Quiz Scores: Load data (Evaluators & Admins)
+  const loadQuizScores = async (silent = false) => {
+    if (!silent) setQuizLoading(true);
     try {
       const quizRes = await api.get<{ multiplier: number; scores: any[] }>('/auction/staff/quiz-scores');
       setQuizScores(quizRes.scores || []);
       setQuizMultiplier(quizRes.multiplier || 100);
+      setDirtyTeamIds(new Set());
+    } catch (err) {
+      console.error('[Quiz] Error loading scores:', err);
+    } finally {
+      if (!silent) setQuizLoading(false);
+    }
+  };
 
+  // Live Auction & Company Allocations: Load data (Admins Only)
+  const loadAuctionData = async () => {
+    try {
       const auctionRes = await api.get<{ liveAuction: any }>('/auction/live');
       setLiveAuctionState(auctionRes.liveAuction || null);
+
+      const compRes = await api.get<{ companies: AuctionCompanyItem[] }>('/auction/companies');
+      setAuctionCompanies(compRes.companies || []);
+
+      const assignRes = await api.get<{ assignments: any[] }>('/auction/staff/assignments');
+      setTeamAssignments(assignRes.assignments || []);
     } catch (err) {
       console.error('[Auction] Error loading data:', err);
     }
   };
 
   const handleQuizScoreChange = (teamId: string, marks: number) => {
+    setDirtyTeamIds((prev) => new Set(prev).add(teamId));
     setQuizScores((prev) =>
       prev.map((item) =>
         item.teamId === teamId
@@ -627,6 +696,29 @@ export const StaffPortal: React.FC = () => {
     );
   };
 
+  const handleSaveSingleTeamScore = async (teamId: string) => {
+    const item = quizScores.find((s) => s.teamId === teamId);
+    if (!item) return;
+    setSavingSingleTeamId(teamId);
+    setNotice(null);
+    try {
+      await api.post(`/auction/staff/quiz-score/${teamId}`, {
+        quizMarks: Number(item.quizMarks) || 0,
+        multiplier: quizMultiplier,
+      });
+      setDirtyTeamIds((prev) => {
+        const next = new Set(prev);
+        next.delete(teamId);
+        return next;
+      });
+      setNotice({ type: 'success', message: `Saved quiz score for ${item.teamName} (${item.quizMarks} marks -> ${item.auctionBalance} tokens)` });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || `Failed to save score for ${item.teamName}.` });
+    } finally {
+      setSavingSingleTeamId(null);
+    }
+  };
+
   const handleSaveQuizScores = async () => {
     setSavingQuizScores(true);
     setNotice(null);
@@ -638,8 +730,9 @@ export const StaffPortal: React.FC = () => {
           quizMarks: Number(s.quizMarks) || 0,
         })),
       });
-      setNotice({ type: 'success', message: 'Quiz marks and team auction balances saved successfully!' });
-      await loadQuizAndAuctionData();
+      setDirtyTeamIds(new Set());
+      setNotice({ type: 'success', message: 'All team quiz marks and auction balances saved successfully!' });
+      await loadQuizScores(true);
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Failed to save quiz scores.' });
     } finally {
@@ -693,7 +786,7 @@ export const StaffPortal: React.FC = () => {
       const res = await api.post<{ message: string; liveAuction: any }>('/auction/staff/finalize', {});
       setLiveAuctionState(res.liveAuction);
       setNotice({ type: 'success', message: res.message });
-      await loadQuizAndAuctionData();
+      await loadAuctionData();
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Failed to finalize auction item.' });
     } finally {
@@ -715,11 +808,204 @@ export const StaffPortal: React.FC = () => {
       setLiveAuctionState(res.liveAuction);
       setNotice({ type: 'success', message: res.message });
       setSelectedAssignTeamId('');
-      await loadQuizAndAuctionData();
+      await loadAuctionData();
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Failed to assign auction company.' });
     } finally {
       setAuctionActionLoading(false);
+    }
+  };
+
+  const handleAddAuctionCompany = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAuctionCompName.trim() || !newAuctionCompDesc.trim()) {
+      setNotice({ type: 'error', message: 'Name and description are required for the auction company.' });
+      return;
+    }
+    const newComp: AuctionCompanyItem = {
+      id: `auc_${Date.now()}`,
+      name: newAuctionCompName.trim(),
+      description: newAuctionCompDesc.trim(),
+      basePrice: Number(newAuctionCompPrice) || 0,
+      isAssigned: false,
+    };
+    const updated = [...auctionCompanies, newComp];
+    try {
+      await api.put('/auction/companies', { companies: updated });
+      setAuctionCompanies(updated);
+      setNewAuctionCompName('');
+      setNewAuctionCompDesc('');
+      setNewAuctionCompPrice(50);
+      setNotice({ type: 'success', message: `Added "${newComp.name}" to Bucket 2 auction companies!` });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to add auction company.' });
+    }
+  };
+
+  const handleDeleteAuctionCompany = async (id: string) => {
+    const updated = auctionCompanies.filter((c) => c.id !== id);
+    try {
+      await api.put('/auction/companies', { companies: updated });
+      setAuctionCompanies(updated);
+      setNotice({ type: 'success', message: 'Auction company removed from Bucket 2.' });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to delete auction company.' });
+    }
+  };
+
+  const handleSaveEditAuctionCompany = async (id: string) => {
+    const updated = auctionCompanies.map((c) =>
+      c.id === id
+        ? {
+            ...c,
+            name: editCompName.trim() || c.name,
+            description: editCompDesc.trim() || c.description,
+            basePrice: Number(editCompPrice) || 0,
+          }
+        : c
+    );
+    try {
+      await api.put('/auction/companies', { companies: updated });
+      setAuctionCompanies(updated);
+      setEditingCompId(null);
+      setNotice({ type: 'success', message: 'Auction company updated successfully!' });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to update company.' });
+    }
+  };
+
+  const handleStartAuctionFromBucket = async (comp: AuctionCompanyItem) => {
+    setAuctionActionLoading(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ message: string; liveAuction: any }>('/auction/staff/start-item', {
+        id: comp.id,
+        name: comp.name,
+        description: comp.description,
+        basePrice: comp.basePrice || 0,
+      });
+      setLiveAuctionState(res.liveAuction);
+      setNotice({ type: 'success', message: `Broadcasting "${comp.name}" on the live auction floor!` });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to start auction item.' });
+    } finally {
+      setAuctionActionLoading(false);
+    }
+  };
+
+  const handleReassignSubmit = async () => {
+    if (!reassignModalTeam) return;
+    setAuctionActionLoading(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ message: string }>('/auction/staff/reassign', {
+        teamId: reassignModalTeam.teamId,
+        companyId: reassignSelectedCompId || null,
+      });
+      setNotice({ type: 'success', message: res.message });
+      setReassignModalTeam(null);
+      setReassignSelectedCompId('');
+      await loadAuctionData();
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to update assignment.' });
+    } finally {
+      setAuctionActionLoading(false);
+    }
+  };
+
+  const handleUnassignTeamAuction = async (teamId: string) => {
+    setAuctionActionLoading(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ message: string }>('/auction/staff/reassign', {
+        teamId,
+        companyId: null,
+      });
+      setNotice({ type: 'success', message: res.message });
+      await loadAuctionData();
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to unassign company.' });
+    } finally {
+      setAuctionActionLoading(false);
+    }
+  };
+
+  const handleToggleFinalSubmission = async () => {
+    setEventLoading(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ message: string; finalSubmissionOpen: boolean }>('/admin/config/final-submission-toggle', {
+        open: !config?.finalSubmissionOpen,
+      });
+      if (config) {
+        setConfig({ ...config, finalSubmissionOpen: res.finalSubmissionOpen });
+      }
+      setNotice({ type: 'success', message: res.message });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to toggle final submissions.' });
+    } finally {
+      setEventLoading(false);
+    }
+  };
+
+  const handleToggleWinnersAnnouncement = async () => {
+    setTogglingWinners(true);
+    setNotice(null);
+    try {
+      const willAnnounce = !winnersAnnounced;
+      let winnersPayload: any[] = [];
+      if (willAnnounce) {
+        const teamPool: any[] = teams.length > 0 ? teams : quizScores.map((q) => ({ _id: q.teamId, teamName: q.teamName, college: q.college }));
+        const t1: any = teamPool.find((t: any) => (t._id || t.teamId)?.toString() === winnerRank1TeamId) || teamPool[0];
+        const t2: any = teamPool.find((t: any) => (t._id || t.teamId)?.toString() === winnerRank2TeamId) || teamPool[1];
+        const t3: any = teamPool.find((t: any) => (t._id || t.teamId)?.toString() === winnerRank3TeamId) || teamPool[2];
+
+        if (t1) {
+          winnersPayload.push({
+            rank: 1,
+            teamId: (t1._id || t1.teamId)?.toString(),
+            teamName: t1.teamName,
+            college: t1.college || '',
+            prizeTitle: winnerRank1Title,
+          });
+        }
+        if (t2) {
+          winnersPayload.push({
+            rank: 2,
+            teamId: (t2._id || t2.teamId)?.toString(),
+            teamName: t2.teamName,
+            college: t2.college || '',
+            prizeTitle: winnerRank2Title,
+          });
+        }
+        if (t3) {
+          winnersPayload.push({
+            rank: 3,
+            teamId: (t3._id || t3.teamId)?.toString(),
+            teamName: t3.teamName,
+            college: t3.college || '',
+            prizeTitle: winnerRank3Title,
+          });
+        }
+      }
+
+      const res = await api.post<{ message: string; winnersAnnouncement: any }>('/admin/config/winners-toggle', {
+        announced: willAnnounce,
+        winners: willAnnounce ? winnersPayload : [],
+      });
+
+      setWinnersAnnounced(res.winnersAnnouncement.announced);
+      if (config) {
+        setConfig({
+          ...config,
+          winnersAnnouncement: res.winnersAnnouncement,
+        });
+      }
+      setNotice({ type: 'success', message: res.message });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to update winners announcement.' });
+    } finally {
+      setTogglingWinners(false);
     }
   };
 
@@ -997,6 +1283,21 @@ export const StaffPortal: React.FC = () => {
                   </Button>
                 </>
               )}
+
+              <div className="flex items-center gap-2 border-l border-mist pl-3">
+                <span className="text-[11px] font-semibold text-ink-muted">Stage 5 Final Pitch:</span>
+                <Badge variant={config?.finalSubmissionOpen ? 'success' : 'mist'}>
+                  {config?.finalSubmissionOpen ? 'Open' : 'Closed'}
+                </Badge>
+                <Button
+                  variant={config?.finalSubmissionOpen ? 'secondary' : 'primary'}
+                  size="sm"
+                  loading={eventLoading}
+                  onClick={handleToggleFinalSubmission}
+                >
+                  {config?.finalSubmissionOpen ? 'Close Submissions' : 'Enable Final Submissions'}
+                </Button>
+              </div>
             </div>
           )}
         </div>
@@ -1019,8 +1320,21 @@ export const StaffPortal: React.FC = () => {
           </button>
         )}
 
-        {/* Live Company Auction */}
+        {/* Quiz Scores & Budgets (Evaluators & Admins) */}
         {(isAdmin || isEvaluator) && (
+          <button
+            onClick={() => setActiveTab('quiz')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+              activeTab === 'quiz' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+            }`}
+          >
+            <HelpCircle className="w-4 h-4" />
+            <span>Quiz Scores & Budgets</span>
+          </button>
+        )}
+
+        {/* Live Company Auction & Allocations (Admins Only) */}
+        {isAdmin && (
           <button
             onClick={() => setActiveTab('auction')}
             className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
@@ -1028,7 +1342,7 @@ export const StaffPortal: React.FC = () => {
             }`}
           >
             <Gavel className="w-4 h-4" />
-            <span>Live Company Auction</span>
+            <span>Live Auction & Company Allocations</span>
           </button>
         )}
 
@@ -1373,12 +1687,129 @@ export const StaffPortal: React.FC = () => {
       )}
 
       {/* ========================================================= */}
-      {/* TAB: LIVE COMPANY AUCTION & DIRECT ASSIGNMENT */}
+      {/* TAB: QUIZ SCORES & BIDDING BUDGETS (Evaluators & Admins) */}
       {/* ========================================================= */}
-      {(isAdmin || isEvaluator) && activeTab === 'auction' && (
+      {(isAdmin || isEvaluator) && activeTab === 'quiz' && (
         <div className="space-y-6">
           <Card
-            title="Company Auction Showcase & Assignment"
+            title="Team Quiz Scores & Available Bidding Budgets"
+            subtitle="Enter evaluated quiz scores for teams. Scores are converted into auction bidding tokens."
+            action={
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" icon={<RotateCw className="w-3.5 h-3.5" />} onClick={() => loadQuizScores()}>
+                  Refresh Scores
+                </Button>
+                <Button variant="primary" size="sm" loading={savingQuizScores} onClick={handleSaveQuizScores} icon={<Save className="w-3.5 h-3.5" />}>
+                  Save All Scores
+                </Button>
+              </div>
+            }
+          >
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-paper rounded border border-mist">
+                <div>
+                  <span className="text-xs font-bold text-ink">Token Rate (Quiz Marks Multiplier)</span>
+                  <p className="text-[11px] text-ink-muted">Tokens credited per quiz mark to form the auction bidding balance</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-ink">Rate:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={quizMultiplier}
+                    disabled={!isAdmin}
+                    onChange={(e) => setQuizMultiplier(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="input-field text-xs font-mono font-bold w-24 text-center disabled:opacity-60"
+                  />
+                  <span className="text-xs text-ink-muted">Tokens / Mark</span>
+                </div>
+              </div>
+
+              {quizLoading ? (
+                <div className="p-8 text-center text-xs text-ink-muted">Loading quiz scores...</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-mist">
+                        <th className="table-header">Team Name</th>
+                        <th className="table-header w-36">Quiz Score (Marks)</th>
+                        <th className="table-header">Auction Budget</th>
+                        <th className="table-header">Spent Tokens</th>
+                        <th className="table-header">Available Bidding Amount</th>
+                        <th className="table-header text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {quizScores.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-xs text-ink-muted">
+                            No participating teams found.
+                          </td>
+                        </tr>
+                      ) : (
+                        quizScores.map((item) => {
+                          const isDirty = dirtyTeamIds.has(item.teamId);
+                          const isSavingThis = savingSingleTeamId === item.teamId;
+                          return (
+                            <tr key={item.teamId} className="border-b border-mist hover:bg-paper/40 transition-colors">
+                              <td className="table-cell font-bold text-ink">
+                                <div className="flex items-center gap-2">
+                                  <span>{item.teamName}</span>
+                                  {isDirty && (
+                                    <span className="inline-block w-2 h-2 rounded-full bg-amber-500" title="Unsaved changes" />
+                                  )}
+                                </div>
+                              </td>
+                              <td className="table-cell">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={item.quizMarks ?? 0}
+                                  onChange={(e) => handleQuizScoreChange(item.teamId, Math.max(0, parseInt(e.target.value, 10) || 0))}
+                                  className="input-field text-xs font-mono font-bold w-24"
+                                />
+                              </td>
+                              <td className="table-cell font-mono font-bold text-ink">
+                                {item.auctionBalance} Tokens
+                              </td>
+                              <td className="table-cell font-mono text-ink-muted">
+                                {item.spentTokens || 0} Tokens
+                              </td>
+                              <td className="table-cell font-mono font-bold text-signal">
+                                {item.remainingBalance} Tokens
+                              </td>
+                              <td className="table-cell text-right">
+                                <Button
+                                  variant={isDirty ? 'primary' : 'secondary'}
+                                  size="sm"
+                                  loading={isSavingThis}
+                                  onClick={() => handleSaveSingleTeamScore(item.teamId)}
+                                >
+                                  {isDirty ? 'Save' : 'Saved'}
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB: LIVE COMPANY AUCTION & DIRECT ASSIGNMENT (Admins Only) */}
+      {/* ========================================================= */}
+      {isAdmin && activeTab === 'auction' && (
+        <div className="space-y-6">
+          {/* Section 1: Live Auction Floor Controller */}
+          <Card
+            title="Live Auction Floor Controller"
             subtitle="Showcase companies on the live auction block and assign them directly to participating teams"
           >
             <div className="space-y-6">
@@ -1449,11 +1880,29 @@ export const StaffPortal: React.FC = () => {
                             className="input-field text-xs w-full font-semibold"
                           >
                             <option value="">-- Select Team to Receive Company --</option>
-                            {(teams.length > 0 ? teams : quizScores.map(q => ({ _id: q.teamId, teamName: q.teamName }))).map((tm: any) => (
-                              <option key={tm._id || tm.teamId} value={tm._id || tm.teamId}>
-                                {tm.teamName} {tm.college ? `(${tm.college})` : ''}
-                              </option>
-                            ))}
+                            {(() => {
+                              const eligible = (
+                                teams.length > 0 ? teams : quizScores.map((q) => ({ _id: q.teamId, teamName: q.teamName, college: q.college }))
+                              ).filter((tm: any) => {
+                                const idStr = (tm._id || tm.teamId)?.toString();
+                                const assignment = teamAssignments.find((a: any) => a.teamId?.toString() === idStr);
+                                return !assignment || !assignment.auctionCompany || !assignment.auctionCompany.name;
+                              });
+
+                              if (eligible.length === 0) {
+                                return (
+                                  <option value="" disabled>
+                                    All teams already have an auction organization assigned
+                                  </option>
+                                );
+                              }
+
+                              return eligible.map((tm: any) => (
+                                <option key={tm._id || tm.teamId} value={tm._id || tm.teamId}>
+                                  {tm.teamName} {tm.college ? `(${tm.college})` : ''}
+                                </option>
+                              ));
+                            })()}
                           </select>
                         </div>
 
@@ -1479,7 +1928,7 @@ export const StaffPortal: React.FC = () => {
                 </div>
               ) : (
                 <form onSubmit={handleStartAuctionItem} className="p-5 bg-paper rounded-xl border border-mist space-y-4">
-                  <h4 className="text-xs font-bold text-ink uppercase tracking-wider">Put a Company on the Block</h4>
+                  <h4 className="text-xs font-bold text-ink uppercase tracking-wider">Broadcast a Company on the Block</h4>
                   <p className="text-xs text-ink-muted">
                     Broadcast a company and its initial bid to all participants on the live showcase.
                   </p>
@@ -1524,7 +1973,425 @@ export const StaffPortal: React.FC = () => {
               )}
             </div>
           </Card>
+
+          {/* Section 2: Bucket 2 Auction Companies Pool */}
+          <Card
+            title="Bucket 2: Auction Organizations Pool"
+            subtitle="Organizations configured for the live auction floor. Broadcast any organization directly or edit details."
+          >
+            <div className="space-y-6">
+              {/* Form to Add New Company to Bucket 2 */}
+              {isAdmin && (
+                <form onSubmit={handleAddAuctionCompany} className="p-4 bg-paper rounded-lg border border-mist space-y-3">
+                  <h5 className="text-xs font-bold text-ink uppercase tracking-wider">Add Organization to Bucket 2</h5>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-ink uppercase mb-1">Company Name *</label>
+                      <input
+                        type="text"
+                        value={newAuctionCompName}
+                        onChange={(e) => setNewAuctionCompName(e.target.value)}
+                        placeholder="e.g. Acme Quantum Labs"
+                        className="input-field text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-ink uppercase mb-1">Description *</label>
+                      <input
+                        type="text"
+                        value={newAuctionCompDesc}
+                        onChange={(e) => setNewAuctionCompDesc(e.target.value)}
+                        placeholder="e.g. Fault-tolerant quantum computing systems"
+                        className="input-field text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-semibold text-ink uppercase mb-1">Initial Bid (Tokens)</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={newAuctionCompPrice}
+                          onChange={(e) => setNewAuctionCompPrice(parseInt(e.target.value, 10) || 0)}
+                          className="input-field text-xs font-mono w-24"
+                        />
+                        <Button type="submit" variant="primary" size="sm" icon={<Plus className="w-3.5 h-3.5" />}>
+                          Add
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </form>
+              )}
+
+              {/* Grid of Bucket 2 Companies */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-xs font-bold text-ink uppercase tracking-wider">
+                    Configured Bucket 2 Organizations ({auctionCompanies.length})
+                  </h5>
+                  <Button variant="secondary" size="sm" icon={<RotateCw className="w-3 h-3" />} onClick={loadAuctionData}>
+                    Refresh
+                  </Button>
+                </div>
+
+                {auctionCompanies.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-ink-muted bg-paper rounded border border-mist">
+                    No organizations configured in Bucket 2. Add companies above.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {auctionCompanies.map((comp) => (
+                      <div
+                        key={comp.id}
+                        className="p-4 bg-white rounded-lg border border-mist flex flex-col justify-between gap-3 shadow-xs hover:border-mist-dark transition-all"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                            <h6 className="font-bold text-sm text-ink">{comp.name}</h6>
+                            <Badge variant={comp.isAssigned ? 'success' : 'signal'}>
+                              {comp.isAssigned ? 'Assigned' : `Base: ${comp.basePrice}`}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-ink-muted leading-relaxed line-clamp-3">
+                            {comp.description}
+                          </p>
+                          {comp.isAssigned && comp.assignedToTeamName && (
+                            <div className="text-[11px] text-emerald-800 font-semibold mt-2 pt-2 border-t border-mist">
+                              Assigned to: {comp.assignedToTeamName}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-mist text-xs">
+                          <span className="font-mono text-ink-muted text-[11px]">{comp.basePrice} Tokens</span>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon={<Play className="w-3 h-3" />}
+                              onClick={() => handleStartAuctionFromBucket(comp)}
+                              loading={auctionActionLoading}
+                            >
+                              Showcase
+                            </Button>
+                            {isAdmin && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<Trash2 className="w-3 h-3 text-red-500" />}
+                                onClick={() => handleDeleteAuctionCompany(comp.id)}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {/* Section 3: Team Company Allocations & Assignment Overrides */}
+          <Card
+            title="Team Company Allocations & Assignment Overrides"
+            subtitle="Review which team selected which company across Round 1 and the Live Auction. Admins can change or reassign companies as needed."
+          >
+            <div className="space-y-4">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-mist">
+                      <th className="table-header">Team Name</th>
+                      <th className="table-header">Round 1 Organization</th>
+                      <th className="table-header">Auction Organization (Bucket 2)</th>
+                      <th className="table-header">Winning Price</th>
+                      <th className="table-header">Status</th>
+                      <th className="table-header text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teamAssignments.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-xs text-ink-muted">
+                          Loading team company assignments...
+                        </td>
+                      </tr>
+                    ) : (
+                      teamAssignments.map((tm) => (
+                        <tr key={tm.teamId} className="border-b border-mist hover:bg-paper/40 transition-colors">
+                          <td className="table-cell font-bold text-ink">
+                            <div>{tm.teamName}</div>
+                            {tm.college && <div className="text-[10px] font-normal text-ink-muted">{tm.college}</div>}
+                          </td>
+                          <td className="table-cell">
+                            {tm.roundRobinCompany ? (
+                              <span className="font-semibold text-ink">{tm.roundRobinCompany.name}</span>
+                            ) : (
+                              <span className="text-ink-muted italic">Round 1 Pending</span>
+                            )}
+                          </td>
+                          <td className="table-cell">
+                            {tm.auctionCompany ? (
+                              <span className="font-semibold text-signal">{tm.auctionCompany.name}</span>
+                            ) : (
+                              <span className="text-ink-muted italic">Not Assigned</span>
+                            )}
+                          </td>
+                          <td className="table-cell font-mono">
+                            {tm.auctionCompany?.price ? `${tm.auctionCompany.price} Tokens` : '-'}
+                          </td>
+                          <td className="table-cell">
+                            <Badge variant={tm.hasBothCompanies ? 'success' : 'saffron'}>
+                              {tm.hasBothCompanies ? '2 of 2 Secured' : tm.roundRobinCompany || tm.auctionCompany ? '1 of 2 Secured' : 'Pending'}
+                            </Badge>
+                          </td>
+                          <td className="table-cell text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<Edit3 className="w-3 h-3" />}
+                                onClick={() => {
+                                  setReassignModalTeam(tm);
+                                  setReassignSelectedCompId(tm.auctionCompany?.id || '');
+                                }}
+                              >
+                                Change
+                              </Button>
+                              {tm.auctionCompany && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  icon={<Trash2 className="w-3 h-3 text-red-500" />}
+                                  onClick={() => handleUnassignTeamAuction(tm.teamId)}
+                                />
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Card>
+
+          {/* Section 5: Stage 5 Final Project Pitch Submission Gate */}
+          <Card
+            title="Stage 5: Final Project Pitch Submission Gate"
+            subtitle="Enable or close final pitch submissions across all participating teams once company auction concludes."
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-paper rounded-lg border border-mist">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-ink uppercase tracking-wider">Current Gate Status:</span>
+                  <Badge variant={config?.finalSubmissionOpen ? 'success' : 'mist'}>
+                    {config?.finalSubmissionOpen ? 'Final Submissions OPEN' : 'Final Submissions CLOSED'}
+                  </Badge>
+                </div>
+                <p className="text-xs text-ink-muted leading-relaxed max-w-xl">
+                  {config?.finalSubmissionOpen
+                    ? 'Participants who have acquired both organizations can now submit their final pitch deliverables.'
+                    : 'Stage 5 submission is locked. Teams who have both organizations will see "Awaiting Admin Launch".'}
+                </p>
+              </div>
+
+              <Button
+                variant={config?.finalSubmissionOpen ? 'secondary' : 'primary'}
+                loading={eventLoading}
+                icon={config?.finalSubmissionOpen ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                onClick={handleToggleFinalSubmission}
+              >
+                {config?.finalSubmissionOpen ? 'Close Final Submissions' : 'Open Final Pitch Submissions'}
+              </Button>
+            </div>
+          </Card>
+
+          {/* Section 6: Grand Finale Winners Announcement & Podium Platform */}
+          <Card
+            title="Section 6: Grand Finale Winners Announcement & Podium Curtain"
+            subtitle="Publish the final Top 3 winners. Once published, all participants and the public are shown the celebratory 2 | 1 | 3 podium page with beautified emojis."
+          >
+            <div className="space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-paper rounded-lg border border-mist">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-ink uppercase tracking-wider">Podium Curtain Status:</span>
+                    <Badge variant={winnersAnnounced ? 'success' : 'mist'}>
+                      {winnersAnnounced ? '🎉 Winners Announced (Podium Active)' : 'Normal Portal Active'}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-ink-muted leading-relaxed max-w-xl">
+                    {winnersAnnounced
+                      ? 'The 2 | 1 | 3 grand finale podium is currently visible to all participants and public visitors. Staff members continue to access the Staff Portal normally.'
+                      : 'Participants and public see their standard workspace views. Announce winners below to present the official podium.'}
+                  </p>
+                </div>
+
+                <Button
+                  variant={winnersAnnounced ? 'secondary' : 'primary'}
+                  loading={togglingWinners}
+                  icon={winnersAnnounced ? <Pause className="w-3.5 h-3.5" /> : <Award className="w-3.5 h-3.5" />}
+                  onClick={handleToggleWinnersAnnouncement}
+                >
+                  {winnersAnnounced ? 'Hide Winners & Restore Portal' : 'Announce Winners & Reveal Podium 🎉'}
+                </Button>
+              </div>
+
+              {/* Configure / Select Top 3 Winners */}
+              <div className="p-4 bg-white rounded-lg border border-mist space-y-4">
+                <h5 className="text-xs font-bold text-ink uppercase tracking-wider">
+                  Configure Top 3 Winners (Ranked 2 | 1 | 3)
+                </h5>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                  {/* Rank 2 (Left) */}
+                  <div className="p-3.5 rounded-lg border-2 border-slate-300 bg-slate-50/50 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-700 flex items-center gap-1.5">
+                        <span className="text-base">🥈</span> Rank 2 (1st Runner Up)
+                      </span>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-ink-muted mb-1">Select Team</label>
+                      <select
+                        value={winnerRank2TeamId}
+                        onChange={(e) => setWinnerRank2TeamId(e.target.value)}
+                        className="input-field text-xs font-semibold w-full"
+                      >
+                        <option value="">-- Choose Team for 2nd Place --</option>
+                        {(teams.length > 0 ? teams : quizScores.map((q) => ({ _id: q.teamId, teamName: q.teamName }))).map((t: any) => (
+                          <option key={t._id || t.teamId} value={t._id || t.teamId}>
+                            {t.teamName} {t.college ? `(${t.college})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-ink-muted mb-1">Prize / Title</label>
+                      <input
+                        type="text"
+                        value={winnerRank2Title}
+                        onChange={(e) => setWinnerRank2Title(e.target.value)}
+                        className="input-field text-xs w-full"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Rank 1 (Center) */}
+                  <div className="p-3.5 rounded-lg border-2 border-amber-400 bg-amber-50/50 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                        <span className="text-base">🥇</span> Rank 1 (Champion)
+                      </span>
+                      <span className="text-xs">👑</span>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-ink-muted mb-1">Select Team</label>
+                      <select
+                        value={winnerRank1TeamId}
+                        onChange={(e) => setWinnerRank1TeamId(e.target.value)}
+                        className="input-field text-xs font-semibold w-full"
+                      >
+                        <option value="">-- Choose Team for 1st Place --</option>
+                        {(teams.length > 0 ? teams : quizScores.map((q) => ({ _id: q.teamId, teamName: q.teamName }))).map((t: any) => (
+                          <option key={t._id || t.teamId} value={t._id || t.teamId}>
+                            {t.teamName} {t.college ? `(${t.college})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-ink-muted mb-1">Prize / Title</label>
+                      <input
+                        type="text"
+                        value={winnerRank1Title}
+                        onChange={(e) => setWinnerRank1Title(e.target.value)}
+                        className="input-field text-xs w-full"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Rank 3 (Right) */}
+                  <div className="p-3.5 rounded-lg border-2 border-amber-600/40 bg-amber-50/20 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-800 flex items-center gap-1.5">
+                        <span className="text-base">🥉</span> Rank 3 (2nd Runner Up)
+                      </span>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-ink-muted mb-1">Select Team</label>
+                      <select
+                        value={winnerRank3TeamId}
+                        onChange={(e) => setWinnerRank3TeamId(e.target.value)}
+                        className="input-field text-xs font-semibold w-full"
+                      >
+                        <option value="">-- Choose Team for 3rd Place --</option>
+                        {(teams.length > 0 ? teams : quizScores.map((q) => ({ _id: q.teamId, teamName: q.teamName }))).map((t: any) => (
+                          <option key={t._id || t.teamId} value={t._id || t.teamId}>
+                            {t.teamName} {t.college ? `(${t.college})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-ink-muted mb-1">Prize / Title</label>
+                      <input
+                        type="text"
+                        value={winnerRank3Title}
+                        onChange={(e) => setWinnerRank3Title(e.target.value)}
+                        className="input-field text-xs w-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
         </div>
+      )}
+
+      {/* Modal: Reassign Auction Company */}
+      {reassignModalTeam && (
+        <Modal
+          isOpen={!!reassignModalTeam}
+          title={`Change Auction Organization: ${reassignModalTeam.teamName}`}
+          onClose={() => setReassignModalTeam(null)}
+        >
+          <div className="space-y-4 text-xs">
+            <p className="text-ink-muted">
+              Select an organization from Bucket 2 to allocate to <strong>{reassignModalTeam.teamName}</strong>, or clear their current assignment.
+            </p>
+            <div>
+              <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                Select Auction Organization
+              </label>
+              <select
+                value={reassignSelectedCompId}
+                onChange={(e) => setReassignSelectedCompId(e.target.value)}
+                className="input-field text-xs font-semibold w-full"
+              >
+                <option value="">-- Remove / Clear Auction Organization --</option>
+                {auctionCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.isAssigned ? `(Currently held by ${c.assignedToTeamName})` : '(Available)'} - Base {c.basePrice} Tokens
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-mist">
+              <Button variant="secondary" onClick={() => setReassignModalTeam(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" loading={auctionActionLoading} onClick={handleReassignSubmit}>
+                Confirm Assignment Change
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {/* Tab: Evaluation Workspace */}

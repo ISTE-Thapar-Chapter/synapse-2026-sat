@@ -8,10 +8,79 @@ export const StageTransitionSchema = z.object({
 });
 
 export const CleaningSubmissionSchema = z.object({
-  cleanedDatasetUrl: z.string().url('A valid dataset URL is required'),
-  cleaningNotes: z.string().min(5, 'Cleaning notes must be at least 5 characters'),
-  cleaningSummary: z.string().min(5, 'Cleaning summary is required'),
+  cleanedDatasetUrl: z.string().url('A valid dataset URL is required').optional(),
+  datasetUrl: z.string().url('A valid dataset URL is required').optional(),
+  psbUrl: z.string().url('A valid architecture or .psb file link is required'),
+  cleaningNotes: z.string().optional().default(''),
+  cleaningSummary: z.string().optional().default(''),
   answers: z.record(z.any()).optional().default({}),
+}).refine((data) => data.cleanedDatasetUrl || data.datasetUrl, {
+  message: 'Please provide a valid dataset web link.',
+  path: ['datasetUrl'],
+});
+
+export const FeatureCompanyItemSchema = z.object({
+  featureIndex: z.number().int().min(0).max(4),
+  title: z.string().optional().default(''),
+  companyName: z.string().min(2, 'Please enter a valid company name (at least 2 characters)'),
+});
+
+export const FeaturesSubmissionSchema = z.object({
+  features: z.array(FeatureCompanyItemSchema).min(1, 'Please enter company names for the features'),
+});
+
+export const MentorFeatureGradeItemSchema = z.object({
+  featureIndex: z.number().int().min(0).max(4),
+  companyName: z.string().optional().default(''),
+  marks: z.number().min(0, 'Marks cannot be negative').max(10, 'Marks cannot exceed 10'),
+  accuracyScore: z.number().min(0, 'Accuracy rating must be between 0 and 100').max(100, 'Accuracy rating must be between 0 and 100').optional(),
+  accuracyPercent: z.number().min(0, 'Accuracy rating must be between 0 and 100').max(100, 'Accuracy rating must be between 0 and 100').optional(),
+  confidenceScore: z.number().min(0, 'Confidence rating must be between 0 and 100').max(100, 'Confidence rating must be between 0 and 100').optional(),
+  confidencePercent: z.number().min(0, 'Confidence rating must be between 0 and 100').max(100, 'Confidence rating must be between 0 and 100').optional(),
+  feedback: z.string().optional().default(''),
+}).transform((data) => ({
+  featureIndex: data.featureIndex,
+  companyName: data.companyName || '',
+  marks: data.marks,
+  accuracyScore: data.accuracyScore ?? data.accuracyPercent ?? 0,
+  confidenceScore: data.confidenceScore ?? data.confidencePercent ?? 0,
+  feedback: data.feedback || '',
+}));
+
+export const MentorEvaluationSubmitSchema = z.object({
+  teamId: z.string().min(1, 'Team selection is required'),
+  featureGrades: z.array(MentorFeatureGradeItemSchema).min(1, 'At least one feature grade is required'),
+});
+
+export const FinalProjectSubmissionSchema = z.object({
+  productName: z.string().min(2, 'Please enter a valid product name'),
+  productDescription: z.string().min(10, 'Please enter a product description (at least 10 characters)'),
+  prototypeUrl: z.string().url('Please enter a valid web link for your prototype / pitch demo'),
+  githubUrl: z.string().url('Please enter a valid web link for GitHub').optional().or(z.literal('')),
+});
+
+export const QuizScoreEntrySchema = z.object({
+  teamId: z.string().min(1, 'Team is required'),
+  quizMarks: z.number().min(0, 'Quiz marks cannot be negative'),
+});
+
+export const BatchQuizScoreSchema = z.object({
+  scores: z.array(QuizScoreEntrySchema),
+  multiplier: z.number().positive().optional(),
+});
+
+export const AuctionBidSubmitSchema = z.object({
+  bidAmount: z.number().positive('Bid amount must be greater than zero'),
+});
+
+export const AuctionAssignSchema = z.object({
+  teamId: z.string().min(1, 'Please select a team to assign the company to'),
+});
+
+export const FeatureDefinitionItemSchema = z.object({
+  featureIndex: z.number().int().min(0).max(4),
+  title: z.string().min(1, 'Feature title is required'),
+  expectedCompany: z.string().optional().default(''),
 });
 
 export const RequirementAnswerSchema = z.object({
@@ -64,11 +133,11 @@ export const ReopenSubmissionSchema = z.object({
 export const AccountCreateSchema = z.object({
   name: z.string().min(2, 'Name is required'),
   email: z.string().email('Valid email address is required'),
-  role: z.enum(['public', 'evaluator', 'admin']),
+  role: z.enum(['public', 'evaluator', 'mentor', 'admin']),
 });
 
 export const AccountRoleUpdateSchema = z.object({
-  role: z.enum(['public', 'evaluator', 'admin']),
+  role: z.enum(['public', 'evaluator', 'mentor', 'admin']),
 });
 
 export const TeamMemberInputSchema = z.object({
@@ -100,4 +169,18 @@ export const ToggleDisqualificationSchema = z.object({
 
 export const LeaderboardPublishSchema = z.object({
   tieBreakPolicy: z.enum(['score_desc', 'score_desc_then_time_asc']).default('score_desc_then_time_asc'),
+});
+
+export const CompanyConfigItemSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(2, 'Company name is required'),
+  description: z.string().min(5, 'Description must be at least 5 characters'),
+});
+
+export const CompaniesUpdateSchema = z.object({
+  companies: z.array(CompanyConfigItemSchema).min(1, 'At least one company must be configured'),
+});
+
+export const CompanySelectSchema = z.object({
+  companyId: z.string().min(1, 'Company ID is required'),
 });

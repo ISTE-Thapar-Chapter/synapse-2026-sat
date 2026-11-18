@@ -16,24 +16,65 @@ export interface IRequirementAnswer {
   notes?: string;
 }
 
+export interface IFeatureSetItem {
+  featureIndex: number; // 0 to 4
+  title?: string;
+  companyName: string; // ONLY company name input
+}
+
+export interface IMentorFeatureGrade {
+  featureIndex: number;
+  companyName: string;
+  marks: number; // 0 to 10
+  accuracyScore: number; // 0 to 100
+  confidenceScore: number; // 0 to 100
+  feedback?: string;
+}
+
+export interface IMentorEvaluation {
+  mentorId?: Types.ObjectId | null;
+  mentorName: string;
+  mentorEmail: string;
+  featureGrades: IMentorFeatureGrade[];
+  totalFeatureMarks: number; // 0 to 50
+  overallAccuracyScore: number; // 0 to 100
+  overallConfidenceScore: number; // 0 to 100
+  gradedAt: Date;
+}
+
+export interface IFinalSubmission {
+  productName: string;
+  productDescription: string;
+  prototypeUrl: string;
+  githubUrl?: string;
+  submittedAt: Date;
+}
+
 export interface ISubmissionPayload {
-  // Cleaning round fields
+  // Stage 1: Dataset & Architecture / PSB links
+  datasetUrl?: string;
+  psbUrl?: string;
   cleanedDatasetUrl?: string;
   cleaningNotes?: string;
   cleaningSummary?: string;
   answers?: Record<string, any>;
 
-  // Requirements fields
+  // Stage 2: 5 Feature sets (Company names only)
+  features?: IFeatureSetItem[];
   requirements?: IRequirementAnswer[];
   generalNotes?: string;
 
-  // Model training fields
+  // Mentor evaluation per feature set
+  mentorEvaluation?: IMentorEvaluation;
+
+  // Model training fields (legacy / compatibility)
   companyName?: string;
   approachDescription?: string;
   accuracyResults?: string | number;
   githubUrl?: string;
 
-  // Final submission fields
+  // Final project submission
+  finalSubmission?: IFinalSubmission;
   title?: string;
   productDescription?: string;
   sourceUrl?: string;

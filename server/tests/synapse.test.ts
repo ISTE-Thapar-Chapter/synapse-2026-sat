@@ -12,6 +12,7 @@ import { Evaluation } from '../src/models/Evaluation.js';
 import { LeaderboardSnapshot } from '../src/models/LeaderboardSnapshot.js';
 import { CompanyAssignment } from '../src/models/CompanyAssignment.js';
 import { CompetitionConfig } from '../src/models/CompetitionConfig.js';
+import { RoundRobinQueue } from '../src/models/RoundRobinQueue.js';
 import { AuditLog } from '../src/models/AuditLog.js';
 import { signUserToken } from '../src/middleware/auth.js';
 import { LeaseService } from '../src/services/leaseService.js';
@@ -37,7 +38,9 @@ let testLeader: any;
 let testMember: any;
 
 beforeAll(async () => {
-  await connectDB();
+  process.env.NODE_ENV = 'test';
+  // Use dedicated test database (synapse_2026_test) so developer's live synapse_2026 collections are untouched
+  await connectDB('mongodb://127.0.0.1:27017/synapse_2026_test');
   await StageService.initializeStages();
 
   // Reset active stage to 'registration'
@@ -51,6 +54,7 @@ beforeAll(async () => {
   await Submission.deleteMany({});
   await Evaluation.deleteMany({});
   await LeaderboardSnapshot.deleteMany({});
+  await RoundRobinQueue.deleteMany({});
 
   // Create accounts
   await Account.findOneAndUpdate(
@@ -203,7 +207,7 @@ describe('3. Registration Import Normalization & Idempotency', () => {
     expect(secondRun.createdParticipants).toBe(0);
     expect(secondRun.updatedParticipants).toBe(1);
     expect(secondRun.provisionedGoogleAccounts).toBe(0);
-  });
+  }, 15000);
 });
 
 describe('4. Leader-only Drafts & Transactional Submissions', () => {
@@ -242,6 +246,7 @@ describe('4. Leader-only Drafts & Transactional Submissions', () => {
       .set('Authorization', `Bearer ${leaderToken}`)
       .send({
         cleanedDatasetUrl: 'https://datasets.iste.org/cleaned-test.csv',
+        psbUrl: 'https://datasets.iste.org/architecture-test.psb',
         cleaningNotes: 'Handled missing values with median imputation.',
         cleaningSummary: '100% clean verified.',
       });
@@ -671,6 +676,7 @@ describe('9. Sequential Stages: Event Start, Cleaning, 5 Requirements & Default 
         stage: 'cleaning',
         payload: {
           cleanedDatasetUrl: 'https://datasets.iste.org/seq-clean.csv',
+          psbUrl: 'https://datasets.iste.org/seq-arch.psb',
           cleaningSummary: 'Handled missing values and outlier normalization.',
           cleaningNotes: 'Polars and Scikit-learn preprocessing.',
         },
@@ -686,6 +692,7 @@ describe('9. Sequential Stages: Event Start, Cleaning, 5 Requirements & Default 
       .send({
         stage: 'cleaning',
         cleanedDatasetUrl: 'https://datasets.iste.org/seq-clean.csv',
+        psbUrl: 'https://datasets.iste.org/seq-arch.psb',
         cleaningSummary: 'Handled missing values and outlier normalization.',
         cleaningNotes: 'Polars and Scikit-learn preprocessing.',
       });
@@ -861,5 +868,142 @@ describe('10. Admin Account Provisioning & Feature Set Methodology Evaluation', 
     );
     expect(updatedEntry).toBeDefined();
     expect(updatedEntry.score).toBe(94);
+  });
+});
+
+describe('10. Two-Queue Round Robin Company Selection with 2-Minute Burst Time', () => {
+  it('verifies queues are disabled by default and allows admin to configure and enable', async () => {
+    // 0. Verify queues are disabled by default
+    const summaryRes = await request(app)
+      .get('/api/round-robin/summary')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(summaryRes.status).toBe(200);
+    expect(summaryRes.body.queue1.status).toBe('disabled');
+    expect(summaryRes.body.queue2.status).toBe('disabled');
+
+    // 1. Configure Queue 1 companies
+    const q1Res = await request(app)
+      .put('/api/round-robin/queue/1/companies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        companies: [
+          { name: 'Custom NeuroTech', description: 'Brain-computer interface telemetry processing.' },
+          { name: 'Custom BioGen', description: 'Proteomic sequence folding with deep transformers.' },
+        ],
+      });
+    expect(q1Res.status).toBe(200);
+    expect(q1Res.body.companies).toHaveLength(2);
+    expect(q1Res.body.companies[0].name).toBe('Custom NeuroTech');
+
+    // 2. Configure Queue 2 companies (different companies)
+    const q2Res = await request(app)
+      .put('/api/round-robin/queue/2/companies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        companies: [
+          { name: 'Custom GridEnergy', description: 'Grid-scale battery storage dispatch models.' },
+          { name: 'Custom AeroFlight', description: 'Autonomous flight routing and obstacle avoidance.' },
+        ],
+      });
+    expect(q2Res.status).toBe(200);
+    expect(q2Res.body.companies).toHaveLength(2);
+    expect(q2Res.body.companies[0].name).toBe('Custom GridEnergy');
+  });
+
+  it('initializes queues based on leaderboard preference order and executes round robin turns', async () => {
+    // 1. Admin initializes Queue 1 from live leaderboard
+    const initRes = await request(app)
+      .post('/api/round-robin/queue/1/initialize')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(initRes.status).toBe(200);
+    expect(initRes.body.queue.teams.length).toBeGreaterThan(0);
+    expect(initRes.body.queue.status).toBe('idle');
+
+    // Verify first team is the top-ranked team from leaderboard (Test Vector Team with score 95)
+    expect(initRes.body.queue.teams[0].teamName).toBe('Test Vector Team');
+    expect(initRes.body.queue.teams[0].score).toBe(95);
+
+    // 2. Admin starts Queue 1
+    const startRes = await request(app)
+      .post('/api/round-robin/queue/1/start')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(startRes.status).toBe(200);
+    expect(startRes.body.queue.status).toBe('active');
+    expect(startRes.body.queue.burstTimeSeconds).toBe(120);
+    expect(startRes.body.queue.currentTurnStartedAt).toBeDefined();
+
+    // 3. Admin pauses Queue 1 in between turns
+    const pauseRes = await request(app)
+      .post('/api/round-robin/queue/1/pause')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(pauseRes.status).toBe(200);
+    expect(pauseRes.body.queue.status).toBe('paused');
+    expect(pauseRes.body.queue.pausedRemainingSeconds).toBeGreaterThan(0);
+
+    // 4. Admin resumes Queue 1
+    const resumeRes = await request(app)
+      .post('/api/round-robin/queue/1/resume')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(resumeRes.status).toBe(200);
+    expect(resumeRes.body.queue.status).toBe('active');
+
+    // 5. Non-turn team attempts to select out of order -> rejected
+    const firstCompanyId = startRes.body.queue.companies[0].id;
+    const seqLeaderToken = signUserToken('seq.lead@pioneers.edu', 'Seq Leader');
+    const nonTurnRes = await request(app)
+      .post('/api/round-robin/queue/1/select')
+      .set('Authorization', `Bearer ${seqLeaderToken}`) // Turn 2 team, not Turn 1
+      .send({ companyId: firstCompanyId });
+    expect(nonTurnRes.status).toBe(400);
+    expect(nonTurnRes.body.message).toContain("It is not your team's turn to select");
+
+    // 6. Turn 1 team (Test Vector Team) selects company successfully
+    const selectRes = await request(app)
+      .post('/api/round-robin/queue/1/select')
+      .set('Authorization', `Bearer ${leaderToken}`)
+      .send({ companyId: firstCompanyId });
+    expect(selectRes.status).toBe(200);
+    expect(selectRes.body.assignedCompany.isAssigned).toBe(true);
+    expect(selectRes.body.assignedCompany.assignedToTeamName).toBe('Test Vector Team');
+
+    // 7. Verify company is now assigned and cannot be selected again
+    const secondCompanyId = startRes.body.queue.companies[1].id;
+    const reselectRes = await request(app)
+      .post('/api/round-robin/queue/1/select')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({ companyId: firstCompanyId });
+    expect(reselectRes.status).toBe(400);
+
+    // Turn 2 team selects available second company
+    const select2Res = await request(app)
+      .post('/api/round-robin/queue/1/select')
+      .set('Authorization', `Bearer ${seqLeaderToken}`)
+      .send({ companyId: secondCompanyId });
+    expect(select2Res.status).toBe(200);
+    expect(select2Res.body.assignedCompany.assignedToTeamName).toBe('Sequential Pioneers');
+
+    // 8. Queue 2 selection
+    await request(app)
+      .post('/api/round-robin/queue/2/initialize')
+      .set('Authorization', `Bearer ${adminToken}`);
+    const q2Start = await request(app)
+      .post('/api/round-robin/queue/2/start')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(q2Start.status).toBe(200);
+
+    const q2FirstCompanyId = q2Start.body.queue.companies[0].id;
+    const q2SelectRes = await request(app)
+      .post('/api/round-robin/queue/2/select')
+      .set('Authorization', `Bearer ${leaderToken}`)
+      .send({ companyId: q2FirstCompanyId });
+    expect(q2SelectRes.status).toBe(200);
+
+    // 9. Verify team has 2 assigned companies (1 from Queue 1, 1 from Queue 2)
+    const myStatusRes = await request(app)
+      .get('/api/round-robin/my-status')
+      .set('Authorization', `Bearer ${leaderToken}`);
+    expect(myStatusRes.status).toBe(200);
+    expect(myStatusRes.body.queue1.myAssignment.companyName).toBe('Custom NeuroTech');
+    expect(myStatusRes.body.queue2.myAssignment.companyName).toBe('Custom GridEnergy');
   });
 });

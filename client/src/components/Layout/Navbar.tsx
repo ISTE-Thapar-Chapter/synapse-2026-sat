@@ -9,12 +9,13 @@ export const Navbar: React.FC<{ onMenuToggle: () => void }> = ({ onMenuToggle })
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const isStaff = user?.role === 'admin' || user?.role === 'evaluator';
+  const isStaff = user?.role === 'admin' || user?.role === 'evaluator' || user?.role === 'mentor';
   const homePath = isStaff ? '/staff' : '/';
 
   const roleBadgeVariant = {
     admin: 'signal' as const,
     evaluator: 'saffron' as const,
+    mentor: 'navy' as const,
     public: 'mist' as const,
   }[user?.role || 'public'];
 

@@ -14,7 +14,7 @@ export const Sidebar: React.FC<{ isOpen: boolean; onClose: () => void }> = ({
 }) => {
   const { user, team } = useAuth();
 
-  const isStaff = user?.role === 'admin' || user?.role === 'evaluator';
+  const isStaff = user?.role === 'admin' || user?.role === 'evaluator' || user?.role === 'mentor';
 
   const navItemClass = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${

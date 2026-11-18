@@ -2,16 +2,53 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { LeaderboardService } from '../services/leaderboardService.js';
 import { requireAuth, requireRole } from '../middleware/roles.js';
 import { LeaderboardPublishSchema } from '../schemas/validation.js';
+import { CompetitionConfig } from '../models/CompetitionConfig.js';
 
 const router = Router();
 
 /**
- * Public route to get live calculated leaderboard (scores default to 0 for un-evaluated teams)
+ * Public route to get live calculated leaderboard
+ * Respects admin leaderboard visibility toggle
  */
 router.get('/live', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const live = await LeaderboardService.calculateLiveLeaderboard();
+    let config = await CompetitionConfig.findOne();
+    const isVisible = config?.leaderboardVisible ?? false;
+    const isStaff = req.user && ['admin', 'evaluator', 'mentor'].includes(req.user.role);
+
+    if (!isVisible && !isStaff) {
+      const maskedEntries = (live.entries || [])
+        .map((e) => ({
+          teamId: e.teamId,
+          teamName: e.teamName,
+          college: e.college,
+          score: 0,
+          status: e.status,
+        }))
+        .sort((a, b) => (a.teamName || '').localeCompare(b.teamName || ''))
+        .map((e, idx) => ({
+          ...e,
+          rank: idx + 1,
+        }));
+
+      return res.json({
+        ...live,
+        entries: maskedEntries,
+        leaderboardVisible: false,
+        message: 'Rankings and scores will be published shortly.',
+        leaderboard: {
+          ...live,
+          entries: maskedEntries,
+        },
+      });
+    }
+
     return res.json({
+      ...live,
+      entries: live.entries,
+      leaderboardVisible: isVisible,
+      isStaffPreview: !isVisible && isStaff,
       leaderboard: live,
     });
   } catch (err) {
@@ -24,10 +61,38 @@ router.get('/live', async (req: Request, res: Response, next: NextFunction) => {
  */
 router.get('/published', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const published = await LeaderboardService.getPublishedCleaningLeaderboard();
+    const rawPublished = await LeaderboardService.getPublishedCleaningLeaderboard();
+    const published = (rawPublished as any).toObject ? (rawPublished as any).toObject() : rawPublished;
+    let config = await CompetitionConfig.findOne();
+    const isVisible = config?.leaderboardVisible ?? true;
+    const isStaff = req.user && ['admin', 'evaluator', 'mentor'].includes(req.user.role);
+
+    if (!isVisible && !isStaff && published?.entries) {
+      const masked = (published.entries || [])
+        .map((e: any) => ({
+          ...(e.toObject ? e.toObject() : e),
+          score: 0,
+        }))
+        .sort((a: any, b: any) => (a.teamName || '').localeCompare(b.teamName || ''))
+        .map((e: any, idx: number) => ({ ...e, rank: idx + 1 }));
+
+      return res.json({
+        leaderboardVisible: false,
+        published: true,
+        leaderboard: {
+          ...published,
+          entries: masked,
+        },
+        entries: masked,
+      });
+    }
+
     return res.json({
+      leaderboardVisible: isVisible,
+      isStaffPreview: !isVisible && isStaff,
       published: true,
       leaderboard: published,
+      entries: published?.entries || [],
     });
   } catch (err) {
     next(err);

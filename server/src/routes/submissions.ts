@@ -4,10 +4,14 @@ import { StageService } from '../services/stageService.js';
 import { Submission, ISubmissionPayload } from '../models/Submission.js';
 import { CompanyAssignment } from '../models/CompanyAssignment.js';
 import { CompetitionConfig } from '../models/CompetitionConfig.js';
+import { RoundRobinQueue } from '../models/RoundRobinQueue.js';
+import { QuizScore } from '../models/QuizScore.js';
 import { logAudit } from '../services/auditService.js';
 import {
   CleaningSubmissionSchema,
   RequirementsSubmissionSchema,
+  FeaturesSubmissionSchema,
+  FinalProjectSubmissionSchema,
   ModelTrainingSubmissionSchema,
   FinalSubmissionSchema,
   ReopenSubmissionSchema,
@@ -21,7 +25,9 @@ router.use(requireAuth);
  * - isEventStarted
  * - Single dataset (ONLY visible if event is started)
  * - 5 Requirement titles (ONLY visible after cleaning submission is submitted)
- * - Submissions for cleaning & requirements
+ * - Submissions for cleaning, requirements (5 features), and final project
+ * - Assigned companies (from Round 1 selection and Auction)
+ * - hasSelectedTwoCompanies
  */
 router.get('/current', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -55,8 +61,14 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       teamId: team._id,
     });
 
+    const finalSubmission = await Submission.findOne({
+      stage: 'final-submission',
+      teamId: team._id,
+    });
+
     const hasSubmittedCleaning = cleaningSubmission?.status === 'submitted';
     const hasSubmittedRequirements = requirementsSubmission?.status === 'submitted';
+    const hasSubmittedFinal = finalSubmission?.status === 'submitted';
 
     // Single cleaning dataset: ONLY accessible if event is started
     let cleaningDataset = null;
@@ -68,20 +80,77 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       };
     }
 
-    // 5 Requirement titles: ONLY revealed after cleaned dataset & techniques are submitted
+    // 5 Requirement titles: ONLY revealed after cleaned dataset is submitted
     let requirements: string[] = [];
     if (hasSubmittedCleaning) {
       requirements = config.requirementTitles || [];
     }
 
-    // Resolve assigned company if any
-    let assignedCompany = null;
-    const companyRecord = await CompanyAssignment.findOne({ published: true });
-    if (companyRecord) {
-      assignedCompany = companyRecord.assignments.find(
-        (a) => a.teamId.toString() === team._id.toString()
-      );
+    // Resolve assigned companies (from Round 1 selection and Auction / Round 2)
+    const assignedCompanies: Array<{
+      id: string;
+      name: string;
+      description: string;
+      source: string;
+    }> = [];
+
+    // Check Queue 1
+    const q1 = await RoundRobinQueue.findOne({ queueNumber: 1 });
+    if (q1) {
+      const qTeam = q1.teams.find((t) => t.teamId.toString() === team._id.toString());
+      if (qTeam && qTeam.hasSelected && qTeam.selectedCompanyName) {
+        assignedCompanies.push({
+          id: qTeam.selectedCompanyId || 'q1_selected',
+          name: qTeam.selectedCompanyName,
+          description: qTeam.selectedCompanyDescription || 'Selected in Round 1',
+          source: 'Selection Round 1',
+        });
+      }
     }
+
+    // Check Queue 2 / Auction from QuizScore
+    const quizScore = await QuizScore.findOne({ teamId: team._id });
+    if (quizScore?.assignedCompanies?.auctionCompany?.name) {
+      const ac = quizScore.assignedCompanies.auctionCompany;
+      assignedCompanies.push({
+        id: ac.id || 'auction_won',
+        name: ac.name,
+        description: ac.description || `Won in live auction for ${ac.price} tokens`,
+        source: 'Live Auction',
+      });
+    } else {
+      // Also check Queue 2
+      const q2 = await RoundRobinQueue.findOne({ queueNumber: 2 });
+      if (q2) {
+        const q2Team = q2.teams.find((t) => t.teamId.toString() === team._id.toString());
+        if (q2Team && q2Team.hasSelected && q2Team.selectedCompanyName) {
+          assignedCompanies.push({
+            id: q2Team.selectedCompanyId || 'q2_selected',
+            name: q2Team.selectedCompanyName,
+            description: q2Team.selectedCompanyDescription || 'Selected in Round 2',
+            source: 'Selection Round 2',
+          });
+        }
+      }
+    }
+
+    // Legacy published company assignment fallback
+    if (assignedCompanies.length === 0) {
+      const companyRecord = await CompanyAssignment.findOne({ published: true });
+      if (companyRecord) {
+        const match = companyRecord.assignments.find((a) => a.teamId.toString() === team._id.toString());
+        if (match) {
+          assignedCompanies.push({
+            id: 'legacy_assigned',
+            name: match.companyName,
+            description: 'Assigned company',
+            source: 'Assignment',
+          });
+        }
+      }
+    }
+
+    const hasSelectedTwoCompanies = assignedCompanies.length >= 2;
 
     return res.json({
       isEventStarted,
@@ -93,11 +162,19 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       cleaningDataset,
       hasSubmittedCleaning,
       hasSubmittedRequirements,
+      hasSubmittedFinal,
       cleaningSubmission,
       requirementsSubmission,
+      finalSubmission,
       requirements,
-      submission: !hasSubmittedCleaning ? cleaningSubmission : requirementsSubmission,
-      assignedCompany,
+      submission: !hasSubmittedCleaning
+        ? cleaningSubmission
+        : !hasSubmittedRequirements
+        ? requirementsSubmission
+        : finalSubmission || requirementsSubmission,
+      assignedCompanies,
+      assignedCompany: assignedCompanies[0] || null,
+      hasSelectedTwoCompanies,
     });
   } catch (err) {
     next(err);
@@ -120,17 +197,35 @@ router.put('/draft', requireTeamLeader, async (req: Request, res: Response, next
     }
 
     const team = req.team!;
-    const requestedStage = req.body.stage || (req.body.payload?.requirements ? 'requirements' : 'cleaning');
-    const stage = requestedStage === 'requirements' ? 'requirements' : 'cleaning';
-    const payload: ISubmissionPayload = req.body.payload || req.body;
+    const rawPayload = req.body.payload || req.body;
+    let requestedStage = req.body.stage;
+    if (!requestedStage) {
+      if (rawPayload.finalSubmission || rawPayload.productName) {
+        requestedStage = 'final-submission';
+      } else if (rawPayload.features || rawPayload.requirements) {
+        requestedStage = 'requirements';
+      } else {
+        requestedStage = 'cleaning';
+      }
+    }
+    const stage = requestedStage === 'final-submission' ? 'final-submission' : requestedStage === 'requirements' ? 'requirements' : 'cleaning';
+    const payload: ISubmissionPayload = rawPayload;
 
-    // Check pre-condition for requirements draft
+    // Check pre-conditions
     if (stage === 'requirements') {
       const cleanSub = await Submission.findOne({ stage: 'cleaning', teamId: team._id, status: 'submitted' });
       if (!cleanSub) {
         return res.status(400).json({
           error: 'Prerequisite Required',
           message: 'You must submit your cleaned dataset before editing the five requirements.',
+        });
+      }
+    } else if (stage === 'final-submission') {
+      const reqSub = await Submission.findOne({ stage: 'requirements', teamId: team._id, status: 'submitted' });
+      if (!reqSub) {
+        return res.status(400).json({
+          error: 'Prerequisite Required',
+          message: 'You must submit your feature identifications before editing the final project submission.',
         });
       }
     }
@@ -183,8 +278,17 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
 
     const team = req.team!;
     const rawPayload = req.body.payload || req.body;
-    const requestedStage = req.body.stage || (rawPayload.requirements ? 'requirements' : 'cleaning');
-    const stage = requestedStage === 'requirements' ? 'requirements' : 'cleaning';
+    let requestedStage = req.body.stage;
+    if (!requestedStage) {
+      if (rawPayload.finalSubmission || rawPayload.productName) {
+        requestedStage = 'final-submission';
+      } else if (rawPayload.features || rawPayload.requirements) {
+        requestedStage = 'requirements';
+      } else {
+        requestedStage = 'cleaning';
+      }
+    }
+    const stage = requestedStage === 'final-submission' ? 'final-submission' : requestedStage === 'requirements' ? 'requirements' : 'cleaning';
 
     let validatedPayload: any;
     if (stage === 'cleaning') {
@@ -197,7 +301,103 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
           message: 'You must submit your cleaned dataset before submitting requirements.',
         });
       }
-      validatedPayload = RequirementsSubmissionSchema.parse(rawPayload);
+      if (rawPayload.features && Array.isArray(rawPayload.features)) {
+        validatedPayload = FeaturesSubmissionSchema.parse(rawPayload);
+      } else {
+        validatedPayload = RequirementsSubmissionSchema.parse(rawPayload);
+      }
+
+      // Auto-calculate feature marks from company name answer key
+      const featureDefs = config.featureDefinitions || [];
+      const submittedFeatures = validatedPayload.features || [];
+      let totalMarks = 0;
+      let sumAccuracy = 0;
+      let sumConfidence = 0;
+
+      const autoFeatureGrades = submittedFeatures.map((f: any, idx: number) => {
+        const expected = featureDefs.find((d: any) => d.featureIndex === f.featureIndex)?.expectedCompany || '';
+        const userComp = (f.companyName || '').trim().toLowerCase();
+        const expComp = expected.trim().toLowerCase();
+
+        let marks = 0;
+        let accuracyScore = 0;
+        let confidenceScore = 0;
+        let feedback = '';
+
+        if (expComp && userComp) {
+          if (userComp === expComp) {
+            marks = 10;
+            accuracyScore = 100;
+            confidenceScore = 100;
+            feedback = 'Correct company identified.';
+          } else if (userComp.includes(expComp) || expComp.includes(userComp)) {
+            marks = 8;
+            accuracyScore = 80;
+            confidenceScore = 80;
+            feedback = 'Close company identification.';
+          } else {
+            marks = 0;
+            accuracyScore = 20;
+            confidenceScore = 20;
+            feedback = 'Company identification does not match answer key.';
+          }
+        } else {
+          marks = 7;
+          accuracyScore = 70;
+          confidenceScore = 70;
+          feedback = 'Pending mentor manual review.';
+        }
+
+        totalMarks += marks;
+        sumAccuracy += accuracyScore;
+        sumConfidence += confidenceScore;
+
+        return {
+          featureIndex: f.featureIndex,
+          title: f.title || `Feature Set #${idx + 1}`,
+          companyName: f.companyName,
+          marks,
+          accuracyScore,
+          confidenceScore,
+          feedback,
+        };
+      });
+
+      const count = autoFeatureGrades.length || 1;
+      const overallAccuracyScore = Math.round(sumAccuracy / count);
+      const overallConfidenceScore = Math.round(sumConfidence / count);
+
+      validatedPayload = {
+        ...validatedPayload,
+        mentorEvaluation: {
+          mentorId: null,
+          mentorName: 'Automatic Key Check',
+          featureGrades: autoFeatureGrades,
+          totalFeatureMarks: totalMarks,
+          totalMarks,
+          overallAccuracyScore,
+          overallConfidenceScore,
+          feedback: 'Auto-calculated from answer key. Mentors can adjust scores before final evaluation.',
+          gradedAt: new Date(),
+          isAutoCalculated: true,
+        },
+      };
+    } else if (stage === 'final-submission') {
+      const reqSub = await Submission.findOne({ stage: 'requirements', teamId: team._id, status: 'submitted' });
+      if (!reqSub) {
+        return res.status(400).json({
+          error: 'Prerequisite Required',
+          message: 'You must submit your feature identifications before submitting your final project.',
+        });
+      }
+      const parsedFinal = FinalProjectSubmissionSchema.parse(rawPayload.finalSubmission || rawPayload);
+      validatedPayload = {
+        ...parsedFinal,
+        finalSubmission: {
+          ...parsedFinal,
+          submittedAt: new Date(),
+        },
+      };
     }
 
     const now = new Date();

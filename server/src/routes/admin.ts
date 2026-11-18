@@ -76,7 +76,10 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
       }
     );
 
-    return res.status(isNew ? 201 : 200).json(account);
+    return res.status(isNew ? 201 : 200).json({
+      account,
+      ...account.toObject(),
+    });
   } catch (err) {
     next(err);
   }
@@ -699,7 +702,15 @@ router.get('/config', async (req: Request, res: Response, next: NextFunction) =>
 
 router.patch('/config', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { cleaningDatasetTitle, cleaningDatasetUrl, cleaningDatasetDescription, requirementTitles } = req.body;
+    const {
+      cleaningDatasetTitle,
+      cleaningDatasetUrl,
+      cleaningDatasetDescription,
+      requirementTitles,
+      featureDefinitions,
+      leaderboardVisible,
+      quizMultiplier,
+    } = req.body;
     let config = await CompetitionConfig.findOne();
     if (!config) {
       config = new CompetitionConfig({});
@@ -708,16 +719,47 @@ router.patch('/config', async (req: Request, res: Response, next: NextFunction) 
     if (cleaningDatasetTitle !== undefined) config.cleaningDatasetTitle = cleaningDatasetTitle;
     if (cleaningDatasetUrl !== undefined) config.cleaningDatasetUrl = cleaningDatasetUrl;
     if (cleaningDatasetDescription !== undefined) config.cleaningDatasetDescription = cleaningDatasetDescription;
-    if (Array.isArray(requirementTitles)) config.requirementTitles = requirementTitles;
+    if (Array.isArray(featureDefinitions)) {
+      config.featureDefinitions = featureDefinitions;
+      config.requirementTitles = featureDefinitions.map((f: any) => f.title);
+    } else if (Array.isArray(requirementTitles)) {
+      config.requirementTitles = requirementTitles;
+    }
+    if (typeof leaderboardVisible === 'boolean') config.leaderboardVisible = leaderboardVisible;
+    if (typeof quizMultiplier === 'number') config.quizMultiplier = quizMultiplier;
 
     await config.save();
 
     await logAudit(req.user!.email, 'COMPETITION_CONFIG_UPDATED', 'CompetitionConfig', config._id.toString(), {
       cleaningDatasetTitle: config.cleaningDatasetTitle,
       requirementTitles: config.requirementTitles,
+      leaderboardVisible: config.leaderboardVisible,
+      quizMultiplier: config.quizMultiplier,
     });
 
     return res.json(config);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/config/leaderboard-visibility', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { visible } = req.body;
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    config.leaderboardVisible = typeof visible === 'boolean' ? visible : !config.leaderboardVisible;
+    await config.save();
+
+    await logAudit(req.user!.email, 'LEADERBOARD_VISIBILITY_TOGGLED', 'CompetitionConfig', config._id.toString(), {
+      leaderboardVisible: config.leaderboardVisible,
+    });
+
+    return res.json({
+      message: `Leaderboard visibility is now ${config.leaderboardVisible ? 'visible' : 'hidden'}.`,
+      leaderboardVisible: config.leaderboardVisible,
+    });
   } catch (err) {
     next(err);
   }

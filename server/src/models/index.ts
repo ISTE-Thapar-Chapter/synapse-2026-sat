@@ -9,3 +9,5 @@ export * from './LeaderboardSnapshot.js';
 export * from './CompanyAssignment.js';
 export * from './AuditLog.js';
 export * from './CompetitionConfig.js';
+export * from './RoundRobinQueue.js';
+export * from './QuizScore.js';

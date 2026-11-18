@@ -2,6 +2,7 @@ import { Evaluation } from '../models/Evaluation.js';
 import { Submission } from '../models/Submission.js';
 import { Team } from '../models/Team.js';
 import { LeaderboardSnapshot, ILeaderboardEntry } from '../models/LeaderboardSnapshot.js';
+import { CompetitionConfig } from '../models/CompetitionConfig.js';
 import { logAudit } from './auditService.js';
 
 export class LeaderboardService {
@@ -173,6 +174,12 @@ export class LeaderboardService {
     });
 
     await snapshot.save();
+
+    await CompetitionConfig.findOneAndUpdate(
+      {},
+      { $set: { leaderboardVisible: true } },
+      { upsert: true }
+    );
 
     await logAudit(
       adminEmail,

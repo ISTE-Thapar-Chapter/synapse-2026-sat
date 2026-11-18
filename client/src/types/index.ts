@@ -1,4 +1,4 @@
-export type AccountRole = 'public' | 'evaluator' | 'admin';
+export type AccountRole = 'public' | 'evaluator' | 'mentor' | 'admin';
 
 export type StageIdentifier =
   | 'registration'
@@ -110,6 +110,35 @@ export interface AuditLogItem {
   timestamp: string;
 }
 
+export interface LiveAuctionBid {
+  teamId: string;
+  teamName: string;
+  amount: number;
+  timestamp: string;
+}
+
+export interface LiveAuctionItem {
+  id: string;
+  name: string;
+  description: string;
+  basePrice?: number;
+}
+
+export interface LiveAuctionState {
+  activeItem: LiveAuctionItem | null;
+  status: 'idle' | 'bidding' | 'sold' | 'paused';
+  currentBid: number;
+  highestBidderTeamId?: string | null;
+  highestBidderTeamName?: string | null;
+  bidHistory: LiveAuctionBid[];
+}
+
+export interface FeatureDefinition {
+  featureIndex: number;
+  title: string;
+  expectedCompany: string;
+}
+
 export interface CompetitionConfig {
   _id: string;
   isEventStarted?: boolean;
@@ -118,4 +147,126 @@ export interface CompetitionConfig {
   cleaningDatasetUrl: string;
   cleaningDatasetDescription: string;
   requirementTitles: string[];
+  featureDefinitions?: FeatureDefinition[];
+  leaderboardVisible?: boolean;
+  quizMultiplier?: number;
+  liveAuction?: LiveAuctionState;
+}
+
+export interface FeatureSetSubmissionItem {
+  featureIndex: number;
+  title?: string;
+  companyName: string;
+}
+
+export interface MentorFeatureGrade {
+  featureIndex: number;
+  companyName: string;
+  marks: number;
+  accuracyScore: number;
+  confidenceScore: number;
+  feedback?: string;
+}
+
+export interface MentorEvaluation {
+  mentorName: string;
+  mentorEmail: string;
+  featureGrades: MentorFeatureGrade[];
+  totalFeatureMarks: number;
+  overallAccuracyScore: number;
+  overallConfidenceScore: number;
+  gradedAt: string;
+}
+
+export interface FinalProjectSubmission {
+  productName: string;
+  productDescription: string;
+  prototypeUrl: string;
+  githubUrl?: string;
+  submittedAt?: string;
+}
+
+export interface TeamAuctionBalance {
+  hasTeam: boolean;
+  teamId?: string;
+  teamName?: string;
+  quizMarks: number;
+  multiplier: number;
+  auctionBalance: number;
+  spentTokens: number;
+  remainingBalance: number;
+  assignedCompanies?: {
+    queue1Company?: { id: string; name: string; description: string; assignedAt: string } | null;
+    auctionCompany?: { id: string; name: string; description: string; price: number; wonAt: string } | null;
+  };
+}
+
+export type RoundRobinQueueStatus = 'disabled' | 'idle' | 'active' | 'paused' | 'completed';
+
+export interface CompanyPoolItem {
+  id: string;
+  name: string;
+  description: string;
+  isAssigned: boolean;
+  assignedToTeamId?: string | null;
+  assignedToTeamName?: string | null;
+  assignedAt?: string | null;
+}
+
+export interface QueueTeamItem {
+  teamId: string;
+  teamName: string;
+  rank: number;
+  score: number;
+  hasSelected: boolean;
+  selectedCompanyId?: string | null;
+  selectedCompanyName?: string | null;
+  selectedCompanyDescription?: string | null;
+  selectedAt?: string | null;
+  isSkipped?: boolean;
+}
+
+export interface AdminQueueState {
+  _id: string;
+  queueNumber: 1 | 2;
+  title: string;
+  status: RoundRobinQueueStatus;
+  burstTimeSeconds: number;
+  currentTurnIndex: number;
+  currentTurnTeam: QueueTeamItem | null;
+  currentTurnExpiresAt?: string | null;
+  remainingSeconds: number;
+  totalTeams: number;
+  selectedTeamsCount: number;
+  skippedTeamsCount: number;
+  totalCompanies: number;
+  assignedCompaniesCount: number;
+  companies: CompanyPoolItem[];
+  teams: QueueTeamItem[];
+}
+
+export interface ParticipantQueueStatus {
+  queueNumber: 1 | 2;
+  title: string;
+  status: RoundRobinQueueStatus;
+  burstTimeSeconds: number;
+  currentTurnIndex: number;
+  currentTurnTeamName?: string | null;
+  isMyTurn: boolean;
+  remainingSeconds: number;
+  myTeamOrder: number | null;
+  myAssignment: {
+    companyId: string;
+    companyName: string;
+    companyDescription: string;
+    selectedAt: string;
+  } | null;
+  availableCompanies: CompanyPoolItem[];
+  totalCompanies: number;
+}
+
+export interface ParticipantRoundRobinState {
+  teamId: string;
+  queue1: ParticipantQueueStatus;
+  queue2: ParticipantQueueStatus;
 }

@@ -7,6 +7,7 @@ import { Card } from '../components/UI/Card.js';
 import { Badge } from '../components/UI/Badge.js';
 import { Button } from '../components/UI/Button.js';
 import { LeaderboardEntry } from '../types/index.js';
+import { LiveAuctionViewer } from '../components/Auction/LiveAuctionViewer.js';
 import {
   Sparkles,
   Award,
@@ -39,7 +40,7 @@ export const PublicHome: React.FC = () => {
   }
 
   // 1. Staff members are strictly redirected to /staff
-  if (user && (user.role === 'admin' || user.role === 'evaluator')) {
+  if (user && (user.role === 'admin' || user.role === 'evaluator' || user.role === 'mentor')) {
     return <Navigate to="/staff" replace />;
   }
 
@@ -59,10 +60,13 @@ export const PublicHome: React.FC = () => {
               <Badge variant="mist">Guest Observer</Badge>
             </div>
             <p className="text-xs text-ink-muted">
-              {user.email} &bull; Your account is signed in as a public guest. Only registered team participants can submit challenge materials.
+              {user.email} &bull; Your account is signed in as a public guest. Follow the live auction and competition leaderboard below.
             </p>
           </div>
         </div>
+
+        {/* Live Auction Card */}
+        <LiveAuctionViewer />
 
         <Card title="Current Leaderboard" subtitle="Official competition standings">
           {leaderboard.length === 0 ? (
@@ -144,6 +148,9 @@ export const PublicHome: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Live Auction Card */}
+      <LiveAuctionViewer />
 
       {/* Clean Competition Overview Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

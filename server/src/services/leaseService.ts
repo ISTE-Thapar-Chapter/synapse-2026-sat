@@ -100,7 +100,14 @@ export class LeaseService {
           continue;
         }
       } else if (existing.status === 'completed') {
-        // Already scored
+        if (targetTeamId) {
+          existing.evaluatorEmail = normalizedEmail;
+          existing.status = 'in_progress';
+          existing.leaseExpiresAt = leaseExpiresAt;
+          await existing.save();
+          return { success: true, evaluation: await existing.populate('targetTeamId') };
+        }
+        // Already scored in auto-queue rotation
         continue;
       } else if (existing.status === 'in_progress') {
         // Check if expired or owned by same evaluator

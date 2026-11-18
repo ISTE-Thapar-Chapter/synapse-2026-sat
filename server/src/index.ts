@@ -16,6 +16,9 @@ import submissionsRouter from './routes/submissions.js';
 import evaluationsRouter from './routes/evaluations.js';
 import leaderboardRouter from './routes/leaderboard.js';
 import rankingRouter from './routes/ranking.js';
+import roundRobinRouter from './routes/roundRobin.js';
+import mentorRouter from './routes/mentor.js';
+import auctionRouter from './routes/auction.js';
 
 const app = express();
 
@@ -44,6 +47,9 @@ app.use('/api/submissions', submissionsRouter);
 app.use('/api/evaluations', evaluationsRouter);
 app.use('/api/leaderboard', leaderboardRouter);
 app.use('/api/ranking', rankingRouter);
+app.use('/api/round-robin', roundRobinRouter);
+app.use('/api/mentor', mentorRouter);
+app.use('/api/auction', auctionRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

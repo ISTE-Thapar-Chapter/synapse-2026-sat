@@ -60,6 +60,11 @@ beforeAll(async () => {
       $set: {
         finalSubmissionOpen: false,
         auctionCompanies: [],
+        winnersAnnouncement: {
+          announced: false,
+          announcedAt: null,
+          winners: [],
+        },
       },
     },
     { upsert: true }

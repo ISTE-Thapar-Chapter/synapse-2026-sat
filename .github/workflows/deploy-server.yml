@@ -84,9 +84,3 @@ jobs:
             pm2 status 0 || pm2 status
 
             echo "==> Server redeployed successfully!"
-EOF
-
-      - name: Cleanup SSH Key
-        if: always()
-        run: |
-          rm -f ~/.ssh/synapse-be.pem

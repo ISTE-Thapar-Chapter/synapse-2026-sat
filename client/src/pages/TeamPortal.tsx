@@ -505,6 +505,10 @@ export const TeamPortal: React.FC = () => {
   };
 
   const handleSelectCompany = async (queueNumber: 1 | 2, companyId: string) => {
+    if (!isLeader) {
+      setCompanySelectError('Only the team leader is permitted to select a partner company.');
+      return;
+    }
     setCompanySelecting(true);
     setCompanySelectError(null);
     try {
@@ -2121,6 +2125,15 @@ export const TeamPortal: React.FC = () => {
                               </div>
                             </div>
                           </div>
+
+                          {!isLeader && (
+                            <div className="p-3 bg-white/80 rounded-lg border border-signal/30 flex items-center gap-2.5 text-xs text-ink">
+                              <ShieldAlert className="w-4 h-4 text-signal shrink-0" />
+                              <span>
+                                <strong>Team Member View:</strong> You can browse available partner organizations. Only your team leader can submit the official selection.
+                              </span>
+                            </div>
+                          )}
                         </div>
                       ) : currentQueue.status === 'active' ? (
                         <div className="p-5 bg-paper rounded-lg border border-mist flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2201,19 +2214,26 @@ export const TeamPortal: React.FC = () => {
 
                                 <div className="pt-2 border-t border-mist flex justify-end">
                                   {currentQueue.isMyTurn ? (
-                                    <Button
-                                      variant="primary"
-                                      size="sm"
-                                      icon={<CheckCircle2 className="w-3.5 h-3.5" />}
-                                      onClick={() =>
-                                        setSelectedCompanyToConfirm({
-                                          queueNumber: activeQueueTab,
-                                          company: comp,
-                                        })
-                                      }
-                                    >
-                                      Select Company
-                                    </Button>
+                                    isLeader ? (
+                                      <Button
+                                        variant="primary"
+                                        size="sm"
+                                        icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                                        onClick={() =>
+                                          setSelectedCompanyToConfirm({
+                                            queueNumber: activeQueueTab,
+                                            company: comp,
+                                          })
+                                        }
+                                      >
+                                        Select Company
+                                      </Button>
+                                    ) : (
+                                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-50 border border-amber-200 text-[11px] font-semibold text-amber-800">
+                                        <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                        <span>Only leader can select</span>
+                                      </div>
+                                    )
                                   ) : currentQueue.myAssignment ? (
                                     <span className="text-[11px] text-ink-muted italic">Already selected</span>
                                   ) : (
@@ -2511,6 +2531,13 @@ export const TeamPortal: React.FC = () => {
             </p>
           </div>
 
+          {!isLeader && (
+            <div className="p-3 bg-red-50 text-red-900 rounded border border-red-200 text-[11px] font-semibold flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-red-600 shrink-0" />
+              <span>Only the team leader can confirm and lock this company selection.</span>
+            </div>
+          )}
+
           <div className="pt-3 flex items-center justify-end gap-2 border-t border-mist">
             <Button
               variant="secondary"
@@ -2524,6 +2551,7 @@ export const TeamPortal: React.FC = () => {
             <Button
               variant="primary"
               loading={companySelecting}
+              disabled={!isLeader}
               icon={<CheckCircle2 className="w-4 h-4" />}
               onClick={() => {
                 if (selectedCompanyToConfirm) {

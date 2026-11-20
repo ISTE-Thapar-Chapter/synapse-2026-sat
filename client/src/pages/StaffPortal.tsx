@@ -799,6 +799,7 @@ export const StaffPortal: React.FC = () => {
 
       const assignRes = await api.get<{ assignments: any[] }>('/auction/staff/assignments');
       setTeamAssignments(assignRes.assignments || []);
+      loadQuizScores(true);
     } catch (err) {
       console.error('[Auction] Error loading data:', err);
     }
@@ -2125,9 +2126,24 @@ export const StaffPortal: React.FC = () => {
                       {liveAuctionState.status === 'sold' && (
                         <div className="border-l border-mist pl-4">
                           <span className="text-[10px] text-emerald-800 uppercase font-bold block">Assigned Team</span>
-                          <span className="text-sm font-bold text-emerald-700">
-                            {liveAuctionState.highestBidderTeamName || 'Assigned'}
-                          </span>
+                          {(() => {
+                            const soldTeam = quizScores.find(
+                              (q: any) =>
+                                q.teamId?.toString() === liveAuctionState.highestBidderTeamId?.toString() ||
+                                q.teamName === liveAuctionState.highestBidderTeamName
+                            );
+                            const tks = soldTeam ? soldTeam.remainingBalance ?? soldTeam.auctionBalance ?? 0 : null;
+                            return (
+                              <span className="text-sm font-bold text-emerald-700">
+                                {liveAuctionState.highestBidderTeamName || 'Assigned'}
+                                {tks !== null && (
+                                  <span className="font-mono text-xs font-semibold text-emerald-900 ml-1">
+                                    ({tks} Tokens)
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -2137,10 +2153,25 @@ export const StaffPortal: React.FC = () => {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
                       <div className="flex items-center gap-2 text-xs text-emerald-900 font-medium">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>
-                          Company <strong>{liveAuctionState.activeItem.name}</strong> is assigned to team{' '}
-                          <strong>{liveAuctionState.highestBidderTeamName}</strong>.
-                        </span>
+                        {(() => {
+                          const soldTeam = quizScores.find(
+                            (q: any) =>
+                              q.teamId?.toString() === liveAuctionState.highestBidderTeamId?.toString() ||
+                              q.teamName === liveAuctionState.highestBidderTeamName
+                          );
+                          const tks = soldTeam ? soldTeam.remainingBalance ?? soldTeam.auctionBalance ?? 0 : null;
+                          return (
+                            <span>
+                              Company <strong>{liveAuctionState.activeItem.name}</strong> is assigned to team{' '}
+                              <strong>{liveAuctionState.highestBidderTeamName}</strong>
+                              {tks !== null && (
+                                <span className="font-mono font-bold text-emerald-800 ml-1">
+                                  ({tks} Tokens)
+                                </span>
+                              )}.
+                            </span>
+                          );
+                        })()}
                       </div>
                       <Button
                         variant="primary"
@@ -2183,11 +2214,16 @@ export const StaffPortal: React.FC = () => {
                                 );
                               }
 
-                              return eligible.map((tm: any) => (
-                                <option key={tm._id || tm.teamId} value={tm._id || tm.teamId}>
-                                  {tm.teamName} {tm.college ? `(${tm.college})` : ''}
-                                </option>
-                              ));
+                              return eligible.map((tm: any) => {
+                                const idStr = (tm._id || tm.teamId)?.toString();
+                                const qScore = quizScores.find((q: any) => q.teamId?.toString() === idStr);
+                                const tokenCount = qScore ? (qScore.remainingBalance ?? qScore.auctionBalance ?? 0) : 0;
+                                return (
+                                  <option key={tm._id || tm.teamId} value={tm._id || tm.teamId}>
+                                    {tm.teamName} {tm.college ? `(${tm.college})` : ''} — {tokenCount} Tokens
+                                  </option>
+                                );
+                              });
                             })()}
                           </select>
                         </div>
@@ -2334,7 +2370,9 @@ export const StaffPortal: React.FC = () => {
                       >
                         <div>
                           <div className="flex items-start justify-between gap-2 mb-1.5">
-                            <h6 className="font-bold text-sm text-ink">{comp.name}</h6>
+                            <h6 className="font-bold text-sm text-ink">
+                              {comp.name}
+                            </h6>
                             <Badge variant={comp.isAssigned ? 'success' : 'signal'}>
                               {comp.isAssigned ? 'Assigned' : `Base: ${comp.basePrice}`}
                             </Badge>
@@ -2344,7 +2382,19 @@ export const StaffPortal: React.FC = () => {
                           </p>
                           {comp.isAssigned && comp.assignedToTeamName && (
                             <div className="text-[11px] text-emerald-800 font-semibold mt-2 pt-2 border-t border-mist">
-                              Assigned to: {comp.assignedToTeamName}
+                              {(() => {
+                                const qScore = quizScores.find((q: any) => q.teamName?.toLowerCase() === comp.assignedToTeamName?.toLowerCase() || q.teamId?.toString() === comp.assignedToTeamId?.toString());
+                                const assign = teamAssignments.find((a: any) => a.teamName?.toLowerCase() === comp.assignedToTeamName?.toLowerCase() || a.teamId?.toString() === comp.assignedToTeamId?.toString());
+                                const tks = qScore?.remainingBalance ?? qScore?.auctionBalance ?? assign?.remainingBalance ?? assign?.auctionBalance;
+                                return (
+                                  <>
+                                    Assigned to: {comp.assignedToTeamName}
+                                    {tks !== undefined && tks !== null && (
+                                      <span className="font-mono text-[10px] font-bold text-signal ml-1">({tks} Tokens)</span>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
@@ -2408,7 +2458,18 @@ export const StaffPortal: React.FC = () => {
                       teamAssignments.map((tm) => (
                         <tr key={tm.teamId} className="border-b border-mist hover:bg-paper/40 transition-colors">
                           <td className="table-cell font-bold text-ink">
-                            <div>{tm.teamName}</div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{tm.teamName}</span>
+                              {(() => {
+                                const qScore = quizScores.find((q: any) => q.teamId?.toString() === tm.teamId?.toString());
+                                const tks = qScore?.remainingBalance ?? qScore?.auctionBalance ?? tm.remainingBalance ?? tm.auctionBalance;
+                                return tks !== undefined && tks !== null ? (
+                                  <span className="font-mono text-[11px] font-bold text-signal">
+                                    ({tks} Tokens)
+                                  </span>
+                                ) : null;
+                              })()}
+                            </div>
                             {tm.college && <div className="text-[10px] font-normal text-ink-muted">{tm.college}</div>}
                           </td>
                           <td className="table-cell">
@@ -2644,12 +2705,25 @@ export const StaffPortal: React.FC = () => {
       {reassignModalTeam && (
         <Modal
           isOpen={!!reassignModalTeam}
-          title={`Change Auction Organization: ${reassignModalTeam.teamName}`}
+          title={(() => {
+            const qScore = quizScores.find((q: any) => q.teamId?.toString() === reassignModalTeam.teamId?.toString());
+            const tks = qScore?.remainingBalance ?? qScore?.auctionBalance ?? reassignModalTeam.remainingBalance ?? reassignModalTeam.auctionBalance;
+            return `Change Auction Organization: ${reassignModalTeam.teamName}${tks !== undefined && tks !== null ? ` (${tks} Tokens)` : ''}`;
+          })()}
           onClose={() => setReassignModalTeam(null)}
         >
           <div className="space-y-4 text-xs">
             <p className="text-ink-muted">
-              Select an organization from Bucket 2 to allocate to <strong>{reassignModalTeam.teamName}</strong>, or clear their current assignment.
+              Select an organization from Bucket 2 to allocate to{' '}
+              <strong>
+                {reassignModalTeam.teamName}
+                {(() => {
+                  const qScore = quizScores.find((q: any) => q.teamId?.toString() === reassignModalTeam.teamId?.toString());
+                  const tks = qScore?.remainingBalance ?? qScore?.auctionBalance ?? reassignModalTeam.remainingBalance ?? reassignModalTeam.auctionBalance;
+                  return tks !== undefined && tks !== null ? ` (${tks} Tokens)` : '';
+                })()}
+              </strong>
+              , or clear their current assignment.
             </p>
             <div>
               <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
@@ -2663,7 +2737,7 @@ export const StaffPortal: React.FC = () => {
                 <option value="">-- Remove / Clear Auction Organization --</option>
                 {auctionCompanies.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} {c.isAssigned ? `(Currently held by ${c.assignedToTeamName})` : '(Available)'} - Base {c.basePrice} Tokens
+                    {c.name} ({c.basePrice} Tokens) {c.isAssigned ? `(Currently held by ${c.assignedToTeamName})` : '(Available)'}
                   </option>
                 ))}
               </select>

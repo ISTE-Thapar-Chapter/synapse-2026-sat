@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { requireAuth, requireRole } from '../middleware/roles.js';
+import { requireAuth, requireRole, requireTeamLeader } from '../middleware/roles.js';
 import { RoundRobinService } from '../services/roundRobinService.js';
 import { Participant } from '../models/Participant.js';
 import { Team } from '../models/Team.js';
@@ -65,11 +65,12 @@ router.get(
 
 /**
  * POST /api/round-robin/queue/:queueNumber/select
- * Team member selects a company during their turn in the active queue
+ * Team leader selects a company during their turn in the active queue
  */
 router.post(
   '/queue/:queueNumber/select',
   requireAuth,
+  requireTeamLeader,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const queueNumber = parseQueueNum(req.params.queueNumber);

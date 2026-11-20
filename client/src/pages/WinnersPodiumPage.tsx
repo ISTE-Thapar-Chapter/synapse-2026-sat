@@ -124,12 +124,6 @@ export const WinnersPodiumPage: React.FC<WinnersPodiumPageProps> = ({
                     🌟 {rank2.prizeTitle}
                   </span>
                 )}
-                {rank2?.score !== undefined && rank2.score !== null && (
-                  <div className="mt-2 pt-1.5 border-t border-mist w-full">
-                    <span className="text-[9px] text-ink-muted uppercase font-bold block">Score</span>
-                    <span className="font-mono text-xs sm:text-sm font-bold text-ink">{rank2.score} pts</span>
-                  </div>
-                )}
               </div>
 
               {/* Podium Pillar 2 (Silver) */}
@@ -170,12 +164,6 @@ export const WinnersPodiumPage: React.FC<WinnersPodiumPageProps> = ({
                     ✨ {rank1.prizeTitle}
                   </span>
                 )}
-                {rank1?.score !== undefined && rank1.score !== null && (
-                  <div className="mt-2 pt-1.5 border-t border-amber-100 w-full">
-                    <span className="text-[9px] text-amber-800 uppercase font-bold block">Score</span>
-                    <span className="font-mono text-sm sm:text-base font-extrabold text-amber-600">{rank1.score} pts</span>
-                  </div>
-                )}
               </div>
 
               {/* Podium Pillar 1 (Tallest Gold) */}
@@ -212,12 +200,6 @@ export const WinnersPodiumPage: React.FC<WinnersPodiumPageProps> = ({
                   <span className="text-[10px] sm:text-xs font-semibold text-amber-700 mt-1.5 block truncate w-full">
                     ✨ {rank3.prizeTitle}
                   </span>
-                )}
-                {rank3?.score !== undefined && rank3.score !== null && (
-                  <div className="mt-2 pt-1.5 border-t border-mist w-full">
-                    <span className="text-[9px] text-ink-muted uppercase font-bold block">Score</span>
-                    <span className="font-mono text-xs sm:text-sm font-bold text-ink">{rank3.score} pts</span>
-                  </div>
                 )}
               </div>
 

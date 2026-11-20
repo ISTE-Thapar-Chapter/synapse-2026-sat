@@ -29,6 +29,8 @@ import {
   RotateCw,
   Building2,
   Gavel,
+  FileQuestion,
+  ShieldAlert,
 } from 'lucide-react';
 
 export const TeamPortal: React.FC = () => {
@@ -39,12 +41,24 @@ export const TeamPortal: React.FC = () => {
     'cleaning' | 'requirements' | 'leaderboard' | 'companies' | 'final'
   >('cleaning');
 
-  // Company selection subtabs: Queue 1 (Round Robin), Live Auction floor, or Queue 2
-  const [companySubTab, setCompanySubTab] = useState<'queue1' | 'auction' | 'queue2'>('queue1');
+  // Company selection subtabs: Queue 1 (Round Robin), Knowledge Assessment (Quiz), Live Auction floor, or Queue 2
+  const [companySubTab, setCompanySubTab] = useState<'queue1' | 'quiz' | 'auction' | 'queue2'>('queue1');
   const [teamBalance, setTeamBalance] = useState<TeamAuctionBalance | null>(null);
   const [assignedCompanies, setAssignedCompanies] = useState<Array<{ id: string; name: string; description: string; source: string }>>([]);
   const [hasSelectedTwoCompanies, setHasSelectedTwoCompanies] = useState<boolean>(false);
   const [finalSubmissionOpen, setFinalSubmissionOpen] = useState<boolean>(false);
+
+  // Knowledge Assessment State
+  const [quizStatus, setQuizStatus] = useState<'not_started' | 'active' | 'closed'>('not_started');
+  const [quizQuestions, setQuizQuestions] = useState<
+    Array<{ id: number; question: string; options: string[]; image?: string; type?: string; points?: number }>
+  >([]);
+  const [quizSelectedAnswers, setQuizSelectedAnswers] = useState<Record<number, number>>({});
+  const [quizHasSubmitted, setQuizHasSubmitted] = useState<boolean>(false);
+  const [quizSubmittedAt, setQuizSubmittedAt] = useState<Date | null>(null);
+  const [quizSubmitting, setQuizSubmitting] = useState<boolean>(false);
+  const [quizLoading, setQuizLoading] = useState<boolean>(false);
+  const [quizNotice, setQuizNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Final Project Pitch State
   const [finalSubmission, setFinalSubmission] = useState<Submission | null>(null);
@@ -330,10 +344,126 @@ export const TeamPortal: React.FC = () => {
     }
   };
 
+  // -------------------------------------------------------------
+  // Knowledge Assessment (Quiz) Loading & Handlers
+  // -------------------------------------------------------------
+  const loadQuizData = async (silent = false) => {
+    if (!silent) setQuizLoading(true);
+    try {
+      const statusRes = await api.get<{
+        quizStatus: 'not_started' | 'active' | 'closed';
+        totalQuestions: number;
+        hasSubmitted: boolean;
+        submittedAt: string | null;
+        savedAnswers: Array<{ questionId: number; selectedOption: number }>;
+      }>('/quiz/status');
+
+      setQuizStatus(statusRes.quizStatus || 'not_started');
+      setQuizHasSubmitted(!!statusRes.hasSubmitted);
+      if (statusRes.submittedAt) {
+        setQuizSubmittedAt(new Date(statusRes.submittedAt));
+      }
+
+      if (statusRes.savedAnswers && statusRes.savedAnswers.length > 0) {
+        setQuizSelectedAnswers((prev) => {
+          const updated = { ...prev };
+          for (const item of statusRes.savedAnswers) {
+            if (updated[item.questionId] === undefined) {
+              updated[item.questionId] = item.selectedOption;
+            }
+          }
+          return updated;
+        });
+      }
+
+      if (!statusRes.hasSubmitted && (statusRes.quizStatus === 'active' || statusRes.quizStatus === 'closed')) {
+        const questionsRes = await api.get<{
+          quizStatus: string;
+          questions: Array<{
+            id: number;
+            question: string;
+            options: string[];
+            image?: string;
+            type?: string;
+            points?: number;
+          }>;
+        }>('/quiz/questions');
+        setQuizQuestions(questionsRes.questions || []);
+      } else {
+        setQuizQuestions([]);
+      }
+    } catch (err: any) {
+      console.error('[Quiz] Error loading assessment data:', err);
+    } finally {
+      if (!silent) setQuizLoading(false);
+    }
+  };
+
+  const handleSelectQuizOption = (questionId: number, optionIndex: number) => {
+    if (quizStatus !== 'active' || quizHasSubmitted) return;
+    setQuizSelectedAnswers((prev) => ({
+      ...prev,
+      [questionId]: optionIndex,
+    }));
+  };
+
+  const handleSubmitQuiz = async () => {
+    if (quizStatus !== 'active' || quizHasSubmitted) return;
+    if (!isLeader) {
+      setQuizNotice({
+        type: 'error',
+        message: 'Only the team leader is permitted to submit responses on behalf of the team.',
+      });
+      return;
+    }
+    setQuizSubmitting(true);
+    setQuizNotice(null);
+    try {
+      const answersArray = Object.entries(quizSelectedAnswers).map(([qId, optIdx]) => ({
+        questionId: Number(qId),
+        selectedOption: Number(optIdx),
+      }));
+
+      const res = await api.post<{
+        success: boolean;
+        message: string;
+        submittedAt: string;
+      }>('/quiz/submit', { answers: answersArray });
+
+      setQuizHasSubmitted(true);
+      setQuizSubmittedAt(new Date(res.submittedAt));
+      setQuizQuestions([]);
+      setQuizNotice({
+        type: 'success',
+        message: 'Your responses have been successfully submitted and locked!',
+      });
+      // Refresh team auction token balance in background
+      await loadTeamData(true);
+    } catch (err: any) {
+      setQuizNotice({
+        type: 'error',
+        message: err.message || 'Failed to submit responses. Please try again.',
+      });
+    } finally {
+      setQuizSubmitting(false);
+    }
+  };
+
   // Initial load
   useEffect(() => {
     loadTeamData();
+    loadQuizData(true);
   }, []);
+
+  // Poll quiz status when companies section or quiz subtab is open
+  useEffect(() => {
+    if (activeSection === 'companies') {
+      const interval = setInterval(() => {
+        loadQuizData(true);
+      }, 7000);
+      return () => clearInterval(interval);
+    }
+  }, [activeSection, companySubTab]);
 
   // Polling for event start if not yet started
   useEffect(() => {
@@ -1473,13 +1603,19 @@ export const TeamPortal: React.FC = () => {
                       Your Available Auction Bidding Budget
                     </span>
                     <p className="text-ink-muted">
-                      Your allocated token budget for bidding on the live company auction floor.
+                      {teamBalance.tokensReleased
+                        ? 'Your allocated token budget for bidding on the live company auction floor.'
+                        : 'Token balances are currently withheld pending coordinator tie-breaking evaluation.'}
                     </p>
                   </div>
                   <div className="flex items-center gap-4 bg-white px-4 py-2 rounded-lg border border-mist shadow-xs">
                     <div>
                       <span className="text-[10px] text-ink-muted block uppercase font-bold">Available Bidding Budget</span>
-                      <span className="font-mono text-lg font-bold text-signal">{teamBalance.remainingBalance} Tokens</span>
+                      {teamBalance.tokensReleased ? (
+                        <span className="font-mono text-lg font-bold text-signal">{teamBalance.remainingBalance} Tokens</span>
+                      ) : (
+                        <span className="text-xs font-bold text-amber-600 block mt-0.5">Pending Host Release</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1512,6 +1648,34 @@ export const TeamPortal: React.FC = () => {
                       ) : roundRobinStatus?.queue1.isMyTurn ? (
                         <span className="px-1.5 py-0.5 rounded text-[10px] bg-signal text-white font-bold animate-pulse">
                           YOUR TURN
+                        </span>
+                      ) : null}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setCompanySubTab('quiz');
+                        loadQuizData(true);
+                      }}
+                      className={`px-4 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${
+                        companySubTab === 'quiz'
+                          ? 'bg-ink text-white shadow-sm'
+                          : 'bg-white text-ink hover:bg-mist'
+                      }`}
+                    >
+                      <FileQuestion className="w-3.5 h-3.5 text-signal" />
+                      <span>Knowledge Assessment</span>
+                      {quizStatus === 'active' && !quizHasSubmitted ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-signal text-white font-bold animate-pulse">
+                          ACTIVE
+                        </span>
+                      ) : quizHasSubmitted ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-600 text-white font-normal">
+                          SUBMITTED
+                        </span>
+                      ) : quizStatus === 'closed' ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-ink/70 text-white font-normal">
+                          LOCKED
                         </span>
                       ) : null}
                     </button>
@@ -1586,6 +1750,321 @@ export const TeamPortal: React.FC = () => {
                 ) : companySubTab === 'auction' ? (
                   <div className="space-y-4">
                     <LiveAuctionViewer />
+                  </div>
+                ) : companySubTab === 'quiz' ? (
+                  <div className="space-y-6">
+                    {/* Assessment Pending State */}
+                    {quizStatus === 'not_started' ? (
+                      <div className="p-8 bg-paper rounded-xl border border-mist text-center space-y-4">
+                        <div className="w-12 h-12 rounded-full bg-mist border border-mist-dark/30 flex items-center justify-center text-xl mx-auto">
+                          ⏳
+                        </div>
+                        <div className="space-y-1">
+                          <Badge variant="mist">Awaiting Assessment Start</Badge>
+                          <h4 className="text-lg font-serif font-bold text-ink mt-2">
+                            Knowledge Assessment Round
+                          </h4>
+                          <p className="text-xs text-ink-muted max-w-xl mx-auto leading-relaxed">
+                            The knowledge assessment round has not started yet. Once the event coordinators initiate the round, questions will appear here automatically. You can answer questions together and submit your responses in batch.
+                          </p>
+                        </div>
+                        <div className="pt-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<RotateCw className="w-3.5 h-3.5" />}
+                            onClick={() => loadQuizData(false)}
+                          >
+                            Check Status
+                          </Button>
+                        </div>
+                      </div>
+                    ) : quizHasSubmitted ? (
+                      /* Submitted State: Questions are HIDDEN, answers locked, token status shown */
+                      <div className="p-8 bg-paper rounded-xl border border-mist text-center space-y-6">
+                        <div className="w-16 h-16 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-3xl mx-auto text-emerald-600 shadow-xs">
+                          <CheckCircle2 className="w-8 h-8" />
+                        </div>
+
+                        <div className="space-y-2 max-w-lg mx-auto">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Responses Recorded & Locked
+                          </span>
+                          <h4 className="text-xl font-serif font-bold text-ink">
+                            Knowledge Assessment Completed
+                          </h4>
+                          <p className="text-xs text-ink-muted leading-relaxed">
+                            Your responses have been securely submitted and recorded. Questions and answer choices are hidden to maintain assessment integrity.
+                          </p>
+                        </div>
+
+                        <div className="max-w-md mx-auto p-4 bg-white rounded-lg border border-mist shadow-xs text-left space-y-3">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-ink-muted font-medium">Submission Timestamp:</span>
+                            <span className="font-mono font-bold text-ink">
+                              {quizSubmittedAt
+                                ? new Date(quizSubmittedAt).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                  })
+                                : 'Recorded'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs border-t border-mist/60 pt-2.5">
+                            <span className="text-ink-muted font-medium">Tie-Breaker Rule:</span>
+                            <span className="text-emerald-700 font-semibold">
+                              Timestamp Recorded (Earlier wins ties)
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs border-t border-mist/60 pt-2.5">
+                            <span className="text-ink-muted font-medium">Bidding Token Allocation:</span>
+                            {teamBalance?.tokensReleased ? (
+                              <span className="font-mono font-bold text-signal">
+                                {teamBalance.remainingBalance} Tokens Available
+                              </span>
+                            ) : (
+                              <span className="text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">
+                                Pending Coordinator Release
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="p-3.5 bg-amber-50/70 rounded-lg border border-amber-200 max-w-md mx-auto text-left text-xs text-amber-900 space-y-1">
+                          <span className="font-bold flex items-center gap-1.5 text-amber-950">
+                            <Clock className="w-3.5 h-3.5 text-amber-600" />
+                            Bidding Budget Distribution Note
+                          </span>
+                          <p className="text-[11px] text-amber-800 leading-relaxed">
+                            Auction bidding tokens will be distributed once coordinators finalize evaluations and tie-breaking adjustments. You will be able to bid in the live auction as soon as tokens are released.
+                          </p>
+                        </div>
+
+                        <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon={<RotateCw className="w-3.5 h-3.5" />}
+                            onClick={() => {
+                              loadQuizData(false);
+                              loadTeamData(true);
+                            }}
+                          >
+                            Check Allocation Status
+                          </Button>
+                          {teamBalance?.tokensReleased && (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => setCompanySubTab('auction')}
+                              icon={<Gavel className="w-3.5 h-3.5" />}
+                            >
+                              Go to Live Auction Showcase
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Live / Concluded Status Header */}
+                        <div
+                          className={`p-4 rounded-xl border shadow-xs transition-colors ${
+                            quizStatus === 'closed'
+                              ? 'bg-ink/5 border-ink/20'
+                              : 'bg-paper border-mist'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold uppercase tracking-wider text-ink">
+                                  Assessment Status:
+                                </span>
+                                {quizStatus === 'closed' ? (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-ink text-white">
+                                    <Lock className="w-3 h-3" />
+                                    Concluded &bull; Submissions Closed
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-signal text-white animate-pulse">
+                                    Assessment In Progress
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-ink-muted">
+                                {quizStatus === 'closed'
+                                  ? 'Submissions are closed. The submission window for this assessment has concluded.'
+                                  : 'Select your choices below and click Submit Responses. Note: Once submitted, your answers are locked and cannot be edited. Earlier submission timestamp is used for tie-breaking!'}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <div className="text-right">
+                                <span className="text-[10px] text-ink-muted uppercase font-bold block">
+                                  Answered
+                                </span>
+                                <span className="font-mono text-sm font-bold text-ink">
+                                  {Object.keys(quizSelectedAnswers).length} / {quizQuestions.length}
+                                </span>
+                              </div>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon={<RotateCw className="w-3.5 h-3.5" />}
+                                onClick={() => loadQuizData(false)}
+                              >
+                                Sync
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Progress bar */}
+                          <div className="w-full bg-mist-dark/20 h-1.5 rounded-full overflow-hidden mt-3">
+                            <div
+                              className="h-full bg-signal transition-all duration-300"
+                              style={{
+                                width: `${
+                                  quizQuestions.length > 0
+                                    ? (Object.keys(quizSelectedAnswers).length / quizQuestions.length) * 100
+                                    : 0
+                                }%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {!isLeader && quizStatus === 'active' && (
+                          <div className="p-3.5 bg-paper border border-mist rounded-xl flex items-center gap-3 text-xs text-ink-muted">
+                            <ShieldAlert className="w-4 h-4 text-signal shrink-0" />
+                            <span>
+                              <strong className="text-ink">Team Member View:</strong> You can view all questions on your device. Only your team leader can submit the team's final responses.
+                            </span>
+                          </div>
+                        )}
+
+                        {quizNotice && (
+                          <Alert type={quizNotice.type === 'success' ? 'success' : 'error'}>
+                            {quizNotice.message}
+                          </Alert>
+                        )}
+
+                        {/* Questions List */}
+                        {quizLoading && quizQuestions.length === 0 ? (
+                          <div className="p-12 text-center text-xs text-ink-muted">
+                            Loading assessment questions...
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {quizQuestions.map((q, qIndex) => {
+                              const selectedOpt = quizSelectedAnswers[q.id];
+                              const isAnswered = selectedOpt !== undefined;
+
+                              return (
+                                <div
+                                  key={q.id}
+                                  className={`p-5 rounded-xl border transition-all ${
+                                    isAnswered
+                                      ? 'bg-white border-signal/40 shadow-xs'
+                                      : 'bg-paper/40 border-mist'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-3 mb-2">
+                                    <span className="text-xs font-bold text-ink-muted uppercase tracking-wider">
+                                      Question {qIndex + 1} of {quizQuestions.length}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-paper border border-mist text-ink">
+                                      {q.points || 1} {q.points === 1 ? 'Point' : 'Points'}
+                                    </span>
+                                  </div>
+
+                                  <p className="text-sm font-medium text-ink leading-relaxed mb-3">
+                                    {q.question}
+                                  </p>
+
+                                  {q.image && (
+                                    <div className="mb-4 max-w-lg rounded-lg overflow-hidden border border-mist bg-black/5">
+                                      <img
+                                        src={q.image}
+                                        alt={`Question ${qIndex + 1} reference`}
+                                        className="w-full h-auto max-h-72 object-contain"
+                                      />
+                                    </div>
+                                  )}
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    {q.options.map((opt, optIndex) => {
+                                      const isSelected = selectedOpt === optIndex;
+                                      const optLetter = String.fromCharCode(65 + optIndex);
+
+                                      return (
+                                        <button
+                                          key={optIndex}
+                                          type="button"
+                                          disabled={quizStatus === 'closed'}
+                                          onClick={() => handleSelectQuizOption(q.id, optIndex)}
+                                          className={`text-left p-3 rounded-lg border text-xs transition-all flex items-start gap-2.5 ${
+                                            isSelected
+                                              ? 'bg-signal/10 border-signal text-ink font-semibold shadow-xs ring-1 ring-signal'
+                                              : 'bg-white hover:bg-paper/80 border-mist text-ink'
+                                          } ${quizStatus === 'closed' ? 'cursor-default' : 'cursor-pointer'}`}
+                                        >
+                                          <span
+                                            className={`w-6 h-6 rounded flex items-center justify-center font-bold text-xs shrink-0 transition-colors ${
+                                              isSelected
+                                                ? 'bg-signal text-white'
+                                                : 'bg-paper text-ink-muted border border-mist'
+                                            }`}
+                                          >
+                                            {optLetter}
+                                          </span>
+                                          <span className="pt-0.5 leading-snug flex-1">{opt}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                            {/* Sticky Submission Bar */}
+                            {quizStatus === 'active' && (
+                              <div className="sticky bottom-4 z-20 p-4 bg-ink text-white rounded-xl shadow-lg border border-ink-light flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                <div>
+                                  <span className="font-bold text-xs text-white block">
+                                    {isLeader ? 'Ready to Submit Responses' : 'Team Assessment In Progress'}
+                                  </span>
+                                  <span className="text-[11px] text-mist-dark">
+                                    {Object.keys(quizSelectedAnswers).length} of {quizQuestions.length} questions answered
+                                    {isLeader
+                                      ? ' • Submissions are final and locked once submitted'
+                                      : ' • Submissions can only be finalized by your team leader'}
+                                  </span>
+                                </div>
+
+                                {isLeader ? (
+                                  <Button
+                                    variant="primary"
+                                    loading={quizSubmitting}
+                                    onClick={handleSubmitQuiz}
+                                    icon={<Send className="w-3.5 h-3.5" />}
+                                    className="w-full sm:w-auto"
+                                  >
+                                    Submit Responses
+                                  </Button>
+                                ) : (
+                                  <div className="flex items-center gap-2 px-3 py-2 bg-paper/10 border border-mist-dark/40 rounded-lg text-xs text-mist-light">
+                                    <ShieldAlert className="w-4 h-4 text-signal shrink-0" />
+                                    <span>Only team leader can submit</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 ) : (
                   /* SubTab Content: Round Robin (Round 1 Selection) */

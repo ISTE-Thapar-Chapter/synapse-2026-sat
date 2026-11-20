@@ -49,6 +49,16 @@ export interface IWinnerPodiumItem {
   prizeTitle?: string;
 }
 
+export interface IQuizQuestion {
+  id: number;
+  question: string;
+  options: string[];
+  correct: number | null;
+  image?: string;
+  type?: string;
+  points?: number;
+}
+
 export interface IWinnersAnnouncement {
   announced: boolean;
   announcedAt: Date | null;
@@ -65,6 +75,10 @@ export interface ICompetitionConfig extends Document {
   featureDefinitions: IFeatureDefinition[];
   leaderboardVisible: boolean;
   quizMultiplier: number;
+  quizStatus: 'not_started' | 'active' | 'closed';
+  quizTokensReleased: boolean;
+  quizTokensReleasedAt: Date | null;
+  quizQuestions: IQuizQuestion[];
   liveAuction: ILiveAuctionState;
   auctionCompanies: IAuctionCompanyItem[];
   finalSubmissionOpen: boolean;
@@ -123,6 +137,30 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
       type: Number,
       default: 100,
     },
+    quizStatus: {
+      type: String,
+      enum: ['not_started', 'active', 'closed'],
+      default: 'not_started',
+    },
+    quizTokensReleased: {
+      type: Boolean,
+      default: false,
+    },
+    quizTokensReleasedAt: {
+      type: Date,
+      default: null,
+    },
+    quizQuestions: [
+      {
+        id: { type: Number, required: true },
+        question: { type: String, required: true },
+        options: { type: [String], default: [] },
+        correct: { type: Number, default: null },
+        image: { type: String, default: '' },
+        type: { type: String, default: 'multiple_choice' },
+        points: { type: Number, default: 1 },
+      },
+    ],
     liveAuction: {
       activeItem: {
         id: { type: String, default: null },

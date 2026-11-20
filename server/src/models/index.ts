@@ -11,3 +11,4 @@ export * from './AuditLog.js';
 export * from './CompetitionConfig.js';
 export * from './RoundRobinQueue.js';
 export * from './QuizScore.js';
+export * from './QuizSubmission.js';

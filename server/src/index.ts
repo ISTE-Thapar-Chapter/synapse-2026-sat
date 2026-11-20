@@ -20,6 +20,7 @@ import rankingRouter from './routes/ranking.js';
 import roundRobinRouter from './routes/roundRobin.js';
 import mentorRouter from './routes/mentor.js';
 import auctionRouter from './routes/auction.js';
+import quizRouter from './routes/quiz.js';
 
 const app = express();
 
@@ -82,6 +83,7 @@ app.use('/api/ranking', rankingRouter);
 app.use('/api/round-robin', roundRobinRouter);
 app.use('/api/mentor', mentorRouter);
 app.use('/api/auction', auctionRouter);
+app.use('/api/quiz', quizRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

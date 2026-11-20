@@ -137,6 +137,7 @@ beforeAll(async () => {
     {},
     {
       $set: {
+        isEventStarted: true,
         leaderboardVisible: false,
         quizMultiplier: 100,
         auctionItems: [
@@ -513,6 +514,12 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(singleQuizRes.status).toBe(200);
     expect(singleQuizRes.body.score.quizMarks).toBe(6.5);
     expect(singleQuizRes.body.score.auctionBalance).toBe(650);
+
+    // 1d. Evaluator / Staff releases tokens to teams for the upcoming auction
+    const releaseRes = await request(app)
+      .post('/api/quiz/admin/release-tokens')
+      .set('Authorization', `Bearer ${evaluatorToken}`);
+    expect(releaseRes.status).toBe(200);
 
     // 2. Team Alpha checks their balance: 8.5 * 100 = 850 Tokens (quizMarks hidden from participants)
     const balanceResA = await request(app)

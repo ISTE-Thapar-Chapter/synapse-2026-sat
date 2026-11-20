@@ -224,6 +224,7 @@ export interface TeamAuctionBalance {
   auctionBalance: number;
   spentTokens: number;
   remainingBalance: number;
+  tokensReleased?: boolean;
   assignedCompanies?: {
     queue1Company?: { id: string; name: string; description: string; assignedAt: string } | null;
     auctionCompany?: { id: string; name: string; description: string; price: number; wonAt: string } | null;

@@ -33,18 +33,15 @@ export const Navbar: React.FC<{ onMenuToggle: () => void }> = ({ onMenuToggle })
               <Menu className="w-6 h-6" />
             </button>
 
-            <Link to={homePath} className="flex items-center gap-2 group">
-              <div className="w-8 h-8 rounded bg-signal flex items-center justify-center font-bold text-white text-lg tracking-wider">
-                S
-              </div>
-              <div>
-                <span className="font-serif text-lg tracking-tight font-bold text-white group-hover:text-mist transition-colors">
-                  SYNAPSE 2026
-                </span>
-                <span className="hidden sm:inline-block text-xs text-mist-dark ml-2 border-l border-ink-light pl-2">
-                  ISTE × Saturnalia
-                </span>
-              </div>
+            <Link to={homePath} className="flex items-center gap-3 group">
+              <img
+                src="/synapse-image.png"
+                alt="Synapse 2026"
+                className="h-8 sm:h-9 w-auto max-w-[170px] sm:max-w-[200px] object-contain transition-opacity group-hover:opacity-90"
+              />
+              <span className="hidden sm:inline-block font-mono tracking-widest text-[11px] uppercase font-semibold text-mist-dark border-l border-ink-light pl-3 py-0.5">
+                ISTE × Saturnalia
+              </span>
             </Link>
           </div>
 

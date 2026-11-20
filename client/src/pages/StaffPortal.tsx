@@ -47,6 +47,9 @@ import {
   DollarSign,
   HelpCircle,
   Save,
+  FileQuestion,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 
 export const StaffPortal: React.FC = () => {
@@ -169,6 +172,14 @@ export const StaffPortal: React.FC = () => {
   const [savingSingleTeamId, setSavingSingleTeamId] = useState<string | null>(null);
   const [dirtyTeamIds, setDirtyTeamIds] = useState<Set<string>>(new Set());
   const [quizLoading, setQuizLoading] = useState<boolean>(false);
+  const [adminQuizStatus, setAdminQuizStatus] = useState<'not_started' | 'active' | 'closed'>('not_started');
+  const [statusUpdating, setStatusUpdating] = useState<boolean>(false);
+  const [questionsModalOpen, setQuestionsModalOpen] = useState<boolean>(false);
+  const [adminQuizQuestions, setAdminQuizQuestions] = useState<any[]>([]);
+  const [questionsLoading, setQuestionsLoading] = useState<boolean>(false);
+  const [questionsSaving, setQuestionsSaving] = useState<boolean>(false);
+  const [quizTokensReleased, setQuizTokensReleased] = useState<boolean>(false);
+  const [tokensReleasing, setTokensReleasing] = useState<boolean>(false);
 
   // Live Auction State (Admin Only)
   const [liveAuctionState, setLiveAuctionState] = useState<any | null>(null);
@@ -671,14 +682,109 @@ export const StaffPortal: React.FC = () => {
   const loadQuizScores = async (silent = false) => {
     if (!silent) setQuizLoading(true);
     try {
-      const quizRes = await api.get<{ multiplier: number; scores: any[] }>('/auction/staff/quiz-scores');
+      const quizRes = await api.get<{
+        multiplier: number;
+        quizStatus?: string;
+        quizTokensReleased?: boolean;
+        totalQuestions?: number;
+        scores: any[];
+      }>('/auction/staff/quiz-scores');
       setQuizScores(quizRes.scores || []);
       setQuizMultiplier(quizRes.multiplier || 100);
+      if (quizRes.quizStatus) {
+        setAdminQuizStatus(quizRes.quizStatus as any);
+      }
+      if (quizRes.quizTokensReleased !== undefined) {
+        setQuizTokensReleased(!!quizRes.quizTokensReleased);
+      }
       setDirtyTeamIds(new Set());
     } catch (err) {
       console.error('[Quiz] Error loading scores:', err);
     } finally {
       if (!silent) setQuizLoading(false);
+    }
+  };
+
+  const handleReleaseTokens = async () => {
+    setTokensReleasing(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ success: boolean; message: string }>('/quiz/admin/release-tokens');
+      setQuizTokensReleased(true);
+      setNotice({
+        type: 'success',
+        message: res.message || 'Bidding tokens released to all participating teams successfully!',
+      });
+      await loadQuizScores(true);
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to release bidding tokens.' });
+    } finally {
+      setTokensReleasing(false);
+    }
+  };
+
+  const handleRevokeTokens = async () => {
+    setTokensReleasing(true);
+    setNotice(null);
+    try {
+      const res = await api.post<{ success: boolean; message: string }>('/quiz/admin/revoke-tokens');
+      setQuizTokensReleased(false);
+      setNotice({
+        type: 'success',
+        message: res.message || 'Bidding tokens locked/withheld for adjustments.',
+      });
+      await loadQuizScores(true);
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to lock bidding tokens.' });
+    } finally {
+      setTokensReleasing(false);
+    }
+  };
+
+  const handleUpdateQuizStatus = async (status: 'not_started' | 'active' | 'closed') => {
+    setStatusUpdating(true);
+    setNotice(null);
+    try {
+      await api.post('/quiz/admin/status', { status });
+      setAdminQuizStatus(status);
+      setNotice({
+        type: 'success',
+        message: `Assessment status updated to: ${
+          status === 'active' ? 'Active (accepting participant responses)' : status === 'closed' ? 'Concluded (responses locked)' : 'Not Started'
+        }`,
+      });
+      await loadQuizScores(true);
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to update assessment status.' });
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
+  const handleOpenQuestionsModal = async () => {
+    setQuestionsModalOpen(true);
+    setQuestionsLoading(true);
+    try {
+      const res = await api.get<{ questions: any[] }>('/quiz/admin/questions');
+      setAdminQuizQuestions(res.questions || []);
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to load questions.' });
+    } finally {
+      setQuestionsLoading(false);
+    }
+  };
+
+  const handleSaveQuestions = async () => {
+    setQuestionsSaving(true);
+    setNotice(null);
+    try {
+      await api.put('/quiz/admin/questions', { questions: adminQuizQuestions });
+      setNotice({ type: 'success', message: 'All assessment questions saved successfully.' });
+      setQuestionsModalOpen(false);
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to save questions.' });
+    } finally {
+      setQuestionsSaving(false);
     }
   };
 
@@ -1709,11 +1815,115 @@ export const StaffPortal: React.FC = () => {
       {/* ========================================================= */}
       {(isAdmin || isEvaluator) && activeTab === 'quiz' && (
         <div className="space-y-6">
+          {/* Assessment Flow & Status Controller */}
           <Card
-            title="Team Quiz Scores & Available Bidding Budgets"
-            subtitle="Enter evaluated quiz scores for teams. Scores are converted into auction bidding tokens."
+            title="Knowledge Assessment Round Controller"
+            subtitle="Start the assessment round for participants, conclude submissions, and manage assessment questions."
+          >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-paper rounded-lg border border-mist">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-ink uppercase tracking-wider">Assessment Status:</span>
+                  {adminQuizStatus === 'active' ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-signal text-white animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                      Active & Accepting Responses
+                    </span>
+                  ) : adminQuizStatus === 'closed' ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-700 text-white">
+                      <Lock className="w-3 h-3" />
+                      Concluded & Responses Locked
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-mist text-ink">
+                      Not Started (Hidden from Participants)
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-ink-muted">
+                  {adminQuizStatus === 'active'
+                    ? 'Participants can now view assessment questions, select options, and submit responses in real time.'
+                    : adminQuizStatus === 'closed'
+                    ? 'Submissions are closed. Answers are locked. Automatic scores and tie-breaking timestamps have been recorded.'
+                    : 'Participants cannot see questions or submit responses until you start the assessment.'}
+                </p>
+              </div>
+
+              {isAdmin && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {adminQuizStatus !== 'active' ? (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      loading={statusUpdating}
+                      onClick={() => handleUpdateQuizStatus('active')}
+                      icon={<Play className="w-3.5 h-3.5" />}
+                    >
+                      Start Assessment
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      loading={statusUpdating}
+                      onClick={() => handleUpdateQuizStatus('closed')}
+                      icon={<Lock className="w-3.5 h-3.5" />}
+                    >
+                      Conclude Assessment
+                    </Button>
+                  )}
+
+                  {adminQuizStatus !== 'not_started' && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={statusUpdating}
+                      onClick={() => handleUpdateQuizStatus('not_started')}
+                      icon={<RotateCcw className="w-3.5 h-3.5" />}
+                    >
+                      Reset Status
+                    </Button>
+                  )}
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleOpenQuestionsModal}
+                    icon={<FileQuestion className="w-3.5 h-3.5" />}
+                  >
+                    Manage Questions
+                  </Button>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card
+            title="Team Assessment Scores & Available Bidding Budgets"
+            subtitle="Scores are automatically evaluated upon submission and sorted by tie-breaker (earlier submission timestamp). Tokens remain withheld until manually released."
             action={
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {quizTokensReleased ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={tokensReleasing}
+                    onClick={handleRevokeTokens}
+                    icon={<Lock className="w-3.5 h-3.5" />}
+                  >
+                    Freeze / Lock Tokens
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    loading={tokensReleasing}
+                    onClick={handleReleaseTokens}
+                    icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+                  >
+                    Release Tokens to Teams
+                  </Button>
+                )}
                 <Button variant="secondary" size="sm" icon={<RotateCw className="w-3.5 h-3.5" />} onClick={() => loadQuizScores()}>
                   Refresh Scores
                 </Button>
@@ -1724,6 +1934,30 @@ export const StaffPortal: React.FC = () => {
             }
           >
             <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-paper rounded border border-mist">
+                <div>
+                  <span className="text-xs font-bold text-ink">Bidding Token Distribution Status</span>
+                  <p className="text-[11px] text-ink-muted">
+                    {quizTokensReleased
+                      ? 'Tokens have been distributed to all teams and are active for live bidding.'
+                      : 'Tokens are currently WITHHELD. Review marks and adjust tie-breaking below before releasing tokens to participants.'}
+                  </p>
+                </div>
+                <div>
+                  {quizTokensReleased ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-600 text-white">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Tokens Released to Teams
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500 text-white">
+                      <Lock className="w-3.5 h-3.5" />
+                      Tokens Withheld (Pending Release)
+                    </span>
+                  )}
+                </div>
+              </div>
+
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-paper rounded border border-mist">
                 <div>
                   <span className="text-xs font-bold text-ink">Token Rate (Quiz Marks Multiplier)</span>
@@ -1750,9 +1984,11 @@ export const StaffPortal: React.FC = () => {
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-mist">
+                        <th className="table-header w-12 text-center">Rank</th>
                         <th className="table-header">Team Name</th>
+                        <th className="table-header">Submission Time (Tie-Breaker)</th>
                         <th className="table-header w-36">Quiz Score (Marks)</th>
-                        <th className="table-header">Auction Budget</th>
+                        <th className="table-header">Auction Tokens</th>
                         <th className="table-header">Spent Tokens</th>
                         <th className="table-header">Available Bidding Amount</th>
                         <th className="table-header text-right">Action</th>
@@ -1761,16 +1997,19 @@ export const StaffPortal: React.FC = () => {
                     <tbody>
                       {quizScores.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="p-8 text-center text-xs text-ink-muted">
+                          <td colSpan={8} className="p-8 text-center text-xs text-ink-muted">
                             No participating teams found.
                           </td>
                         </tr>
                       ) : (
-                        quizScores.map((item) => {
+                        quizScores.map((item, index) => {
                           const isDirty = dirtyTeamIds.has(item.teamId);
                           const isSavingThis = savingSingleTeamId === item.teamId;
                           return (
                             <tr key={item.teamId} className="border-b border-mist hover:bg-paper/40 transition-colors">
+                              <td className="table-cell text-center font-bold text-ink-muted">
+                                #{index + 1}
+                              </td>
                               <td className="table-cell font-bold text-ink">
                                 <div className="flex items-center gap-2">
                                   <span>{item.teamName}</span>
@@ -1778,6 +2017,24 @@ export const StaffPortal: React.FC = () => {
                                     <span className="inline-block w-2 h-2 rounded-full bg-amber-500" title="Unsaved changes" />
                                   )}
                                 </div>
+                              </td>
+                              <td className="table-cell">
+                                {item.submittedAt ? (
+                                  <div>
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-100 text-emerald-800">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      {new Date(item.submittedAt).toLocaleTimeString([], {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        second: '2-digit',
+                                      })}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-ink-muted italic">
+                                    Pending Submission
+                                  </span>
+                                )}
                               </td>
                               <td className="table-cell">
                                 <input
@@ -1789,7 +2046,18 @@ export const StaffPortal: React.FC = () => {
                                 />
                               </td>
                               <td className="table-cell font-mono font-bold text-ink">
-                                {item.auctionBalance} Tokens
+                                <div>
+                                  <span>{item.potentialTokens ?? (item.quizMarks * quizMultiplier)} Tokens</span>
+                                  <span
+                                    className={`text-[10px] block font-sans font-semibold mt-0.5 ${
+                                      item.tokensReleased && quizTokensReleased
+                                        ? 'text-emerald-700'
+                                        : 'text-amber-700'
+                                    }`}
+                                  >
+                                    {item.tokensReleased && quizTokensReleased ? 'Active / Released' : 'Withheld from Team'}
+                                  </span>
+                                </div>
                               </td>
                               <td className="table-cell font-mono text-ink-muted">
                                 {item.spentTokens || 0} Tokens
@@ -3817,6 +4085,209 @@ export const StaffPortal: React.FC = () => {
             >
               Save Companies Pool
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Assessment Questions Management Modal (Admin Only) */}
+      <Modal
+        isOpen={questionsModalOpen}
+        onClose={() => setQuestionsModalOpen(false)}
+        title={`Assessment Questions Editor (${adminQuizQuestions.length} Questions)`}
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-ink-muted">
+            Configure questions, answer options, and secret answer keys. Correct answers are strictly evaluated on the backend and never exposed to participants.
+          </p>
+
+          {questionsLoading ? (
+            <div className="p-8 text-center text-xs text-ink-muted">Loading questions...</div>
+          ) : (
+            <div className="max-h-[65vh] overflow-y-auto space-y-4 pr-1">
+              {adminQuizQuestions.map((q, qIdx) => (
+                <div key={qIdx} className="p-3.5 bg-paper rounded-lg border border-mist space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-signal">
+                      Question #{qIdx + 1} (ID: {q.id || qIdx + 1})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = adminQuizQuestions.filter((_, idx) => idx !== qIdx);
+                        setAdminQuizQuestions(updated);
+                      }}
+                      className="text-red-500 hover:text-red-700 p-1 text-xs inline-flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Remove</span>
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
+                      Question Prompt *
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={q.question || ''}
+                      onChange={(e) => {
+                        const updated = [...adminQuizQuestions];
+                        updated[qIdx].question = e.target.value;
+                        setAdminQuizQuestions(updated);
+                      }}
+                      placeholder="Enter the question text"
+                      className="input-field text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
+                      Optional Image URL
+                    </label>
+                    <input
+                      type="text"
+                      value={q.image || ''}
+                      onChange={(e) => {
+                        const updated = [...adminQuizQuestions];
+                        updated[qIdx].image = e.target.value;
+                        setAdminQuizQuestions(updated);
+                      }}
+                      placeholder="https://example.com/diagram.png"
+                      className="input-field text-xs font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                      Options & Correct Answer Selection
+                    </label>
+                    <div className="space-y-2">
+                      {(q.options || ['', '', '', '']).map((opt: string, optIdx: number) => {
+                        const isCorrect = q.correct === optIdx;
+                        return (
+                          <div key={optIdx} className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = [...adminQuizQuestions];
+                                updated[qIdx].correct = optIdx;
+                                updated[qIdx].type = 'multiple_choice';
+                                setAdminQuizQuestions(updated);
+                              }}
+                              className={`px-2.5 py-1 rounded text-[11px] font-bold border transition-colors ${
+                                isCorrect
+                                  ? 'bg-emerald-600 text-white border-emerald-600'
+                                  : 'bg-white text-ink border-mist hover:border-ink-muted'
+                              }`}
+                              title={isCorrect ? 'Correct option' : 'Click to set as correct option'}
+                            >
+                              {String.fromCharCode(65 + optIdx)}
+                              {isCorrect ? ' ✓' : ''}
+                            </button>
+                            <input
+                              type="text"
+                              value={opt}
+                              onChange={(e) => {
+                                const updated = [...adminQuizQuestions];
+                                const opts = [...(updated[qIdx].options || [])];
+                                opts[optIdx] = e.target.value;
+                                updated[qIdx].options = opts;
+                                setAdminQuizQuestions(updated);
+                              }}
+                              placeholder={`Option ${String.fromCharCode(65 + optIdx)} text`}
+                              className={`input-field text-xs flex-1 ${
+                                isCorrect ? 'border-emerald-500 bg-emerald-50/30' : ''
+                              }`}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1 text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-ink-muted">Type:</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = [...adminQuizQuestions];
+                          if (updated[qIdx].type === 'poll') {
+                            updated[qIdx].type = 'multiple_choice';
+                            updated[qIdx].correct = 0;
+                          } else {
+                            updated[qIdx].type = 'poll';
+                            updated[qIdx].correct = null;
+                          }
+                          setAdminQuizQuestions(updated);
+                        }}
+                        className="px-2 py-0.5 rounded text-[10px] font-bold border border-mist bg-white hover:bg-mist text-ink"
+                      >
+                        {q.type === 'poll' ? 'Feedback / Poll (No wrong answer)' : 'Graded Question'}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-ink-muted">Points:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={q.points || 1}
+                        onChange={(e) => {
+                          const updated = [...adminQuizQuestions];
+                          updated[qIdx].points = Math.max(1, parseInt(e.target.value, 10) || 1);
+                          setAdminQuizQuestions(updated);
+                        }}
+                        className="input-field text-xs w-16 text-center font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-mist">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              icon={<Plus className="w-3.5 h-3.5" />}
+              onClick={() => {
+                const nextId =
+                  adminQuizQuestions.length > 0
+                    ? Math.max(...adminQuizQuestions.map((q) => q.id || 0)) + 1
+                    : 1;
+                setAdminQuizQuestions([
+                  ...adminQuizQuestions,
+                  {
+                    id: nextId,
+                    question: '',
+                    options: ['', '', '', ''],
+                    correct: 0,
+                    image: '',
+                    type: 'multiple_choice',
+                    points: 1,
+                  },
+                ]);
+              }}
+            >
+              Add New Question
+            </Button>
+
+            <div className="flex items-center gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setQuestionsModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={questionsSaving}
+                onClick={handleSaveQuestions}
+                icon={<Save className="w-3.5 h-3.5" />}
+              >
+                Save All Questions
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>

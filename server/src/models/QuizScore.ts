@@ -8,6 +8,9 @@ export interface IQuizScore extends Document {
   auctionBalance: number;
   spentTokens: number;
   remainingBalance: number;
+  submittedAt?: Date | null;
+  autoEvaluated?: boolean;
+  tokensReleased?: boolean;
   assignedCompanies: {
     queue1Company?: {
       id: string;
@@ -36,6 +39,9 @@ const QuizScoreSchema = new Schema<IQuizScore>(
     auctionBalance: { type: Number, default: 0 },
     spentTokens: { type: Number, default: 0 },
     remainingBalance: { type: Number, default: 0 },
+    submittedAt: { type: Date, default: null },
+    autoEvaluated: { type: Boolean, default: false },
+    tokensReleased: { type: Boolean, default: false },
     assignedCompanies: {
       queue1Company: {
         id: { type: String },
@@ -55,10 +61,15 @@ const QuizScoreSchema = new Schema<IQuizScore>(
   { timestamps: true }
 );
 
-// Pre-save hook: auto-compute auction balance and remaining balance
+// Pre-save hook: compute auction balance and remaining balance based on release state
 QuizScoreSchema.pre('save', function (next) {
-  this.auctionBalance = Math.round(this.quizMarks * this.multiplier);
-  this.remainingBalance = Math.max(0, this.auctionBalance - (this.spentTokens || 0));
+  if (this.tokensReleased) {
+    this.auctionBalance = Math.round(this.quizMarks * this.multiplier);
+    this.remainingBalance = Math.max(0, this.auctionBalance - (this.spentTokens || 0));
+  } else {
+    this.auctionBalance = 0;
+    this.remainingBalance = 0;
+  }
   next();
 });
 

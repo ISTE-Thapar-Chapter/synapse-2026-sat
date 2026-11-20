@@ -1,0 +1,92 @@
+name: Deploy Server
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - pr-1
+    paths:
+      - 'server/**'
+      - '.github/workflows/deploy-server.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Connect via SSH & Redeploy Server
+    runs-on: ubuntu-latest
+    # Only run if the repository owner is ayushs206
+    if: github.repository_owner == 'ayushs206'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key & Known Hosts
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY || secrets.SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_IP || 'ec2-3-111-60-130.ap-south-1.compute.amazonaws.com' }}
+        run: |
+          if [ -z "$SSH_KEY" ]; then
+            echo "::error::Secret SSH_PRIVATE_KEY is missing! Please store the content of synapse-be.pem into SSH_PRIVATE_KEY in repository secrets."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/synapse-be.pem
+          chmod 400 ~/.ssh/synapse-be.pem
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Connect and Redeploy Server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_IP || 'ec2-3-111-60-130.ap-south-1.compute.amazonaws.com' }}
+          SERVER_USER: ${{ secrets.SERVER_USER || 'ubuntu' }}
+        run: |
+          echo "==> Connecting via SSH to $SERVER_USER@$SERVER_HOST..."
+
+          ssh -i ~/.ssh/synapse-be.pem -o StrictHostKeyChecking=no "$SERVER_USER@$SERVER_HOST" bash << 'EOF'
+            set -e
+
+            echo "==> Enabling NVM..."
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+            echo "==> Node version: $(node -v 2>/dev/null || which node)"
+            echo "==> NPM version: $(npm -v 2>/dev/null || which npm)"
+
+            echo "==> Navigating to repository..."
+            if [ -d "$HOME/synapse-2026-sat" ]; then
+              cd "$HOME/synapse-2026-sat"
+            elif [ -d "synapse-2026-sat" ]; then
+              cd synapse-2026-sat
+            else
+              echo "Error: Directory synapse-2026-sat not found in $HOME or current path."
+              exit 1
+            fi
+
+            echo "==> Pulling latest changes from git..."
+            git pull || true
+
+            echo "==> Navigating to server folder..."
+            cd server
+
+            echo "==> Installing dependencies with npm ci..."
+            npm ci
+
+            echo "==> Building server application..."
+            npm run build
+
+            echo "==> Restarting PM2 process 0..."
+            pm2 restart 0
+
+            echo "==> PM2 Status:"
+            pm2 status 0 || pm2 status
+
+            echo "==> Server redeployed successfully!"
+EOF
+
+      - name: Cleanup SSH Key
+        if: always()
+        run: |
+          rm -f ~/.ssh/synapse-be.pem

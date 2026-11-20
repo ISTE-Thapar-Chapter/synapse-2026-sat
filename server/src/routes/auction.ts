@@ -134,15 +134,20 @@ router.get('/my-balance', requireAuth, async (req: Request, res: Response, next:
       await quizScore.save();
     }
 
+    const isReleased = !!config?.quizTokensReleased && !!quizScore.tokensReleased;
+    const activeBalance = isReleased ? quizScore.remainingBalance : 0;
+    const activeInitial = isReleased ? quizScore.auctionBalance : 0;
+
     return res.json({
       hasTeam: true,
       teamId: team._id,
       teamName: team.teamName,
-      auctionBalance: quizScore.auctionBalance,
-      initialTokens: quizScore.auctionBalance,
-      balance: quizScore.remainingBalance,
+      tokensReleased: isReleased,
+      auctionBalance: activeInitial,
+      initialTokens: activeInitial,
+      balance: activeBalance,
       spentTokens: quizScore.spentTokens,
-      remainingBalance: quizScore.remainingBalance,
+      remainingBalance: activeBalance,
       assignedCompanies: quizScore.assignedCompanies || {},
     });
   } catch (err) {
@@ -183,6 +188,13 @@ router.post('/bid', requireAuth, requireTeamLeader, async (req: Request, res: Re
         teamName: team.teamName,
         quizMarks: 0,
         multiplier: config.quizMultiplier || 100,
+      });
+    }
+
+    if (!config.quizTokensReleased || !quizScore.tokensReleased) {
+      return res.status(400).json({
+        error: 'Tokens Locked',
+        message: 'Bidding tokens have not been released by the coordinators yet. Please wait for the token allocation to be published.',
       });
     }
 
@@ -254,20 +266,44 @@ router.get('/staff/quiz-scores', requireAuth, requireRole(['evaluator', 'admin']
 
     const result = teams.map((t) => {
       const qs = scoreMap.get(t._id.toString());
+      const marks = qs ? qs.quizMarks : 0;
+      const rate = qs ? qs.multiplier : multiplier;
+      const isReleased = qs ? !!qs.tokensReleased : false;
       return {
         teamId: t._id,
         teamName: t.teamName,
-        quizMarks: qs ? qs.quizMarks : 0,
-        multiplier: qs ? qs.multiplier : multiplier,
+        quizMarks: marks,
+        multiplier: rate,
+        potentialTokens: Math.round(marks * rate),
         auctionBalance: qs ? qs.auctionBalance : 0,
         spentTokens: qs ? qs.spentTokens : 0,
         remainingBalance: qs ? qs.remainingBalance : 0,
+        tokensReleased: isReleased,
+        submittedAt: qs?.submittedAt || null,
+        autoEvaluated: !!qs?.autoEvaluated,
         assignedCompanies: qs ? qs.assignedCompanies : {},
       };
     });
 
+    // Sort by quizMarks desc, then earlier submittedAt asc (tie-breaker), then teamName asc
+    result.sort((a, b) => {
+      if (b.quizMarks !== a.quizMarks) {
+        return b.quizMarks - a.quizMarks;
+      }
+      if (a.submittedAt && b.submittedAt) {
+        return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+      }
+      if (a.submittedAt && !b.submittedAt) return -1;
+      if (!a.submittedAt && b.submittedAt) return 1;
+      return a.teamName.localeCompare(b.teamName);
+    });
+
     return res.json({
       multiplier,
+      quizStatus: config?.quizStatus || 'not_started',
+      quizTokensReleased: !!config?.quizTokensReleased,
+      quizTokensReleasedAt: config?.quizTokensReleasedAt || null,
+      totalQuestions: config?.quizQuestions?.length || 0,
       scores: result,
     });
   } catch (err) {
@@ -291,12 +327,13 @@ router.post('/staff/quiz-scores', requireAuth, requireRole(['evaluator', 'admin'
     }
 
     const bulkOps = [];
+    const isReleased = !!config.quizTokensReleased;
     for (const item of parsed.scores) {
       const marks = Math.max(0, item.quizMarks);
       const team = await Team.findById(item.teamId);
       if (!team) continue;
 
-      const balance = Math.round(marks * multiplier);
+      const balance = isReleased ? Math.round(marks * multiplier) : 0;
 
       bulkOps.push({
         updateOne: {
@@ -306,6 +343,7 @@ router.post('/staff/quiz-scores', requireAuth, requireRole(['evaluator', 'admin'
               teamName: team.teamName,
               quizMarks: marks,
               multiplier,
+              tokensReleased: isReleased,
               auctionBalance: balance,
             },
           },
@@ -320,7 +358,15 @@ router.post('/staff/quiz-scores', requireAuth, requireRole(['evaluator', 'admin'
       // Recalculate remaining balances for each affected team
       const allUpdated = await QuizScore.find();
       for (const qs of allUpdated) {
-        qs.remainingBalance = Math.max(0, qs.auctionBalance - (qs.spentTokens || 0));
+        if (config.quizTokensReleased) {
+          qs.tokensReleased = true;
+          qs.auctionBalance = Math.round(qs.quizMarks * (qs.multiplier || multiplier));
+          qs.remainingBalance = Math.max(0, qs.auctionBalance - (qs.spentTokens || 0));
+        } else {
+          qs.tokensReleased = false;
+          qs.auctionBalance = 0;
+          qs.remainingBalance = 0;
+        }
         await qs.save();
       }
     }
@@ -364,7 +410,9 @@ router.post('/staff/quiz-score/:teamId', requireAuth, requireRole(['evaluator', 
       await config.save();
     }
 
-    const balance = Math.round(marks * rate);
+    const isReleased = !!config.quizTokensReleased;
+    const potentialTokens = Math.round(marks * rate);
+    const balance = isReleased ? potentialTokens : 0;
 
     let qs = await QuizScore.findOne({ teamId: team._id });
     if (!qs) {
@@ -373,6 +421,7 @@ router.post('/staff/quiz-score/:teamId', requireAuth, requireRole(['evaluator', 
     qs.teamName = team.teamName;
     qs.quizMarks = marks;
     qs.multiplier = rate;
+    qs.tokensReleased = isReleased;
     qs.auctionBalance = balance;
     qs.remainingBalance = Math.max(0, balance - (qs.spentTokens || 0));
     await qs.save();
@@ -391,7 +440,9 @@ router.post('/staff/quiz-score/:teamId', requireAuth, requireRole(['evaluator', 
         teamId: team._id.toString(),
         teamName: team.teamName,
         quizMarks: marks,
-        auctionBalance: qs.auctionBalance,
+        potentialTokens,
+        auctionBalance: potentialTokens,
+        tokensReleased: isReleased,
         spentTokens: qs.spentTokens || 0,
         remainingBalance: qs.remainingBalance,
       },

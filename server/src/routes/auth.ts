@@ -45,18 +45,20 @@ router.post('/google', async (req: Request, res: Response, next: NextFunction) =
       email = payload.email.toLowerCase().trim();
       name = payload.name || email.split('@')[0];
     } catch (tokenErr) {
-      // Decode JWT payload for dev / mock fallback if needed
-      try {
-        const base64Url = tokenToVerify.split('.')[1];
-        if (base64Url) {
-          const decoded = JSON.parse(Buffer.from(base64Url, 'base64').toString('utf-8'));
-          if (decoded.email) {
-            email = decoded.email.toLowerCase().trim();
-            name = decoded.name || email.split('@')[0];
+      // Decode JWT payload strictly for automated unit/integration test suites
+      if (env.NODE_ENV === 'test') {
+        try {
+          const base64Url = tokenToVerify.split('.')[1];
+          if (base64Url) {
+            const decoded = JSON.parse(Buffer.from(base64Url, 'base64').toString('utf-8'));
+            if (decoded.email) {
+              email = decoded.email.toLowerCase().trim();
+              name = decoded.name || email.split('@')[0];
+            }
           }
+        } catch (decodeErr) {
+          // failed decode
         }
-      } catch (decodeErr) {
-        // failed decode
       }
 
       if (!email) {

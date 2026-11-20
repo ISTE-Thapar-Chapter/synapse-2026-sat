@@ -7,10 +7,18 @@ export const StageTransitionSchema = z.object({
   forceException: z.boolean().optional(),
 });
 
+export const safeWebUrl = (msg = 'A valid web link (http:// or https://) is required') =>
+  z
+    .string()
+    .url(msg)
+    .refine((url) => /^https?:\/\//i.test(url.trim()), {
+      message: msg,
+    });
+
 export const CleaningSubmissionSchema = z.object({
-  cleanedDatasetUrl: z.string().url('A valid dataset URL is required').optional(),
-  datasetUrl: z.string().url('A valid dataset URL is required').optional(),
-  psbUrl: z.string().url('A valid architecture or .psb file link is required'),
+  cleanedDatasetUrl: safeWebUrl('A valid dataset URL is required').optional(),
+  datasetUrl: safeWebUrl('A valid dataset URL is required').optional(),
+  psbUrl: safeWebUrl('A valid architecture or .psb file link is required'),
   cleaningNotes: z.string().optional().default(''),
   cleaningSummary: z.string().optional().default(''),
   answers: z.record(z.any()).optional().default({}),
@@ -55,8 +63,8 @@ export const MentorEvaluationSubmitSchema = z.object({
 export const FinalProjectSubmissionSchema = z.object({
   productName: z.string().min(2, 'Please enter a valid product name'),
   productDescription: z.string().min(10, 'Please enter a product description (at least 10 characters)'),
-  prototypeUrl: z.string().url('Please enter a valid web link for your prototype / pitch demo'),
-  githubUrl: z.string().url('Please enter a valid web link for GitHub').optional().or(z.literal('')),
+  prototypeUrl: safeWebUrl('Please enter a valid web link (http:// or https://) for your prototype / pitch demo'),
+  githubUrl: safeWebUrl('Please enter a valid web link (http:// or https://) for GitHub').optional().or(z.literal('')),
 });
 
 export const QuizScoreEntrySchema = z.object({
@@ -87,7 +95,7 @@ export const RequirementAnswerSchema = z.object({
   title: z.string().min(1, 'Feature title is required'),
   companyName: z.string().min(2, 'Company name is required for this feature').optional().default('Enterprise Solution'),
   response: z.string().min(5, 'Methodology must be at least 5 characters'),
-  link: z.string().url('Must be a valid URL').optional().or(z.literal('')),
+  link: safeWebUrl('Must be a valid web link (http:// or https://)').optional().or(z.literal('')),
   notes: z.string().optional().default(''),
 });
 

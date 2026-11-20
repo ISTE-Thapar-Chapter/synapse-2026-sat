@@ -72,6 +72,7 @@ export const StaffPortal: React.FC = () => {
     'mentor' | 'quiz' | 'auction' | 'evaluations' | 'config' | 'roundrobin' | 'imports' | 'teams' | 'accounts' | 'leaderboard' | 'audit'
   >(isMentor ? 'mentor' : isAdmin ? 'config' : 'evaluations');
 
+  const isSafeUrl = (url?: string): boolean => !!url && /^https?:\/\//i.test(url.trim());
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -1778,7 +1779,7 @@ export const StaffPortal: React.FC = () => {
                           <p className="text-xs text-ink mt-0.5 leading-relaxed">{sub.finalSubmission?.productDescription || 'No description provided.'}</p>
                         </div>
                         <div className="flex items-center gap-3 pt-2 border-t border-mist/60 text-xs">
-                          {sub.finalSubmission?.prototypeUrl && (
+                          {sub.finalSubmission?.prototypeUrl && isSafeUrl(sub.finalSubmission.prototypeUrl) && (
                             <a
                               href={sub.finalSubmission.prototypeUrl}
                               target="_blank"
@@ -1789,7 +1790,7 @@ export const StaffPortal: React.FC = () => {
                               <span>View Prototype / Demo</span>
                             </a>
                           )}
-                          {sub.finalSubmission?.githubUrl && (
+                          {sub.finalSubmission?.githubUrl && isSafeUrl(sub.finalSubmission.githubUrl) && (
                             <a
                               href={sub.finalSubmission.githubUrl}
                               target="_blank"
@@ -2835,15 +2836,21 @@ export const StaffPortal: React.FC = () => {
                   {activeTarget.payload?.cleanedDatasetUrl && (
                     <div className="pt-2 border-t border-mist text-[11px] text-ink-muted flex items-center gap-1.5">
                       <span>Cleaned Dataset Reference:</span>
-                      <a
-                        href={activeTarget.payload.cleanedDatasetUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-signal underline inline-flex items-center gap-1"
-                      >
-                        {activeTarget.payload.cleanedDatasetUrl}
-                        <ExternalLink className="w-2.5 h-2.5" />
-                      </a>
+                      {isSafeUrl(activeTarget.payload.cleanedDatasetUrl) ? (
+                        <a
+                          href={activeTarget.payload.cleanedDatasetUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-signal underline inline-flex items-center gap-1"
+                        >
+                          {activeTarget.payload.cleanedDatasetUrl}
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      ) : (
+                        <span className="font-mono text-ink-muted break-all">
+                          {activeTarget.payload.cleanedDatasetUrl}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

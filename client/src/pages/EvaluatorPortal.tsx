@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 
 export const EvaluatorPortal: React.FC = () => {
+  const isSafeUrl = (url?: string): boolean => !!url && /^https?:\/\//i.test(url.trim());
   const { user } = useAuth();
   const { activeStage } = useStage();
 
@@ -224,15 +225,21 @@ export const EvaluatorPortal: React.FC = () => {
                 <div className="space-y-2 text-xs">
                   <div>
                     <span className="font-bold text-ink">Dataset URL: </span>
-                    <a
-                      href={activeTarget.payload?.cleanedDatasetUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-signal underline break-all inline-flex items-center gap-1"
-                    >
-                      {activeTarget.payload?.cleanedDatasetUrl}
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                    {isSafeUrl(activeTarget.payload?.cleanedDatasetUrl) ? (
+                      <a
+                        href={activeTarget.payload?.cleanedDatasetUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-signal underline break-all inline-flex items-center gap-1"
+                      >
+                        {activeTarget.payload?.cleanedDatasetUrl}
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : (
+                      <span className="font-mono text-ink-muted break-all">
+                        {activeTarget.payload?.cleanedDatasetUrl || 'None'}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <span className="font-bold text-ink">Cleaning Summary: </span>
@@ -261,15 +268,21 @@ export const EvaluatorPortal: React.FC = () => {
                   </div>
                   <div>
                     <span className="font-bold text-ink">GitHub Repository: </span>
-                    <a
-                      href={activeTarget.payload?.githubUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-signal underline break-all inline-flex items-center gap-1"
-                    >
-                      {activeTarget.payload?.githubUrl}
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                    {isSafeUrl(activeTarget.payload?.githubUrl) ? (
+                      <a
+                        href={activeTarget.payload?.githubUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-signal underline break-all inline-flex items-center gap-1"
+                      >
+                        {activeTarget.payload?.githubUrl}
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : (
+                      <span className="font-mono text-ink-muted break-all">
+                        {activeTarget.payload?.githubUrl || 'None'}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <span className="font-bold text-ink">Approach Description: </span>

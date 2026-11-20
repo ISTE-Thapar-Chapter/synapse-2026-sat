@@ -30,7 +30,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET) as { email: string; name?: string };
+    const decoded = jwt.verify(token, env.JWT_SECRET, { algorithms: ['HS256'] }) as { email: string; name?: string };
     const email = decoded.email.toLowerCase().trim();
 
     // 1. Account lookup for role

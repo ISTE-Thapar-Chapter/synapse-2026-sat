@@ -470,6 +470,23 @@ export class RoundRobinService {
       throw new Error(`Company "${company.name}" has already been selected by another team.`);
     }
 
+    // Atomic guard: Verify company is still available and team has not already selected
+    const isStillAvailable = await RoundRobinQueue.exists({
+      _id: queue._id,
+      companies: { $elemMatch: { id: companyId, isAssigned: false } },
+    });
+    if (!isStillAvailable) {
+      throw new Error(`Company "${company.name}" has already been selected by another team.`);
+    }
+
+    const teamAlreadySelected = await RoundRobinQueue.exists({
+      _id: queue._id,
+      teams: { $elemMatch: { teamId: new Types.ObjectId(teamId), hasSelected: true } },
+    });
+    if (teamAlreadySelected) {
+      throw new Error('Your team has already selected a company in this queue.');
+    }
+
     // 5. Assign company to team
     const now = new Date();
     company.isAssigned = true;

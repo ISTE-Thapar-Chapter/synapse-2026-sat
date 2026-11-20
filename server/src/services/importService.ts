@@ -103,9 +103,8 @@ export class ImportService {
     const role: 'leader' | 'member' =
       roleRaw.includes('lead') || roleRaw === 'true' || roleRaw === 'yes' || roleRaw === '1' ? 'leader' : 'member';
 
-    const accountRoleRaw = getVal(['accountrole', 'permission', 'systemrole', 'access']).toLowerCase();
-    const accountRole: 'public' | 'evaluator' | 'admin' =
-      accountRoleRaw === 'admin' ? 'admin' : accountRoleRaw === 'evaluator' ? 'evaluator' : 'public';
+    // Registration participant imports strictly default to 'public' to prevent CSV privilege escalation
+    const accountRole: 'public' | 'evaluator' | 'admin' = 'public';
 
     const phone = getVal(['phone', 'contact', 'mobile', 'phonenumber']) || null;
 

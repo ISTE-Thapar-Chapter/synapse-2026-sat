@@ -1595,27 +1595,21 @@ export const TeamPortal: React.FC = () => {
                 )}
               </div>
 
-              {/* Team Available Auction Bidding Budget */}
-              {teamBalance && (
+              {/* Team Available Auction Bidding Budget (Only visible once released) */}
+              {teamBalance && teamBalance.tokensReleased && (
                 <div className="p-4 bg-paper rounded-xl border border-mist flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
                   <div className="space-y-0.5">
                     <span className="text-[11px] font-bold text-signal uppercase tracking-wider block">
                       Your Available Auction Bidding Budget
                     </span>
                     <p className="text-ink-muted">
-                      {teamBalance.tokensReleased
-                        ? 'Your allocated token budget for bidding on the live company auction floor.'
-                        : 'Token balances are currently withheld pending coordinator tie-breaking evaluation.'}
+                      Your allocated token budget for bidding on the live company auction floor.
                     </p>
                   </div>
                   <div className="flex items-center gap-4 bg-white px-4 py-2 rounded-lg border border-mist shadow-xs">
                     <div>
                       <span className="text-[10px] text-ink-muted block uppercase font-bold">Available Bidding Budget</span>
-                      {teamBalance.tokensReleased ? (
-                        <span className="font-mono text-lg font-bold text-signal">{teamBalance.remainingBalance} Tokens</span>
-                      ) : (
-                        <span className="text-xs font-bold text-amber-600 block mt-0.5">Pending Host Release</span>
-                      )}
+                      <span className="font-mono text-lg font-bold text-signal">{teamBalance.remainingBalance} Tokens</span>
                     </div>
                   </div>
                 </div>
@@ -1623,7 +1617,7 @@ export const TeamPortal: React.FC = () => {
 
               <Card
                 title="Company Allocation Floor"
-                subtitle="Acquire two organizations: Pick from Bucket 1 in Round 1 (round robin), and bid in the Live Auction using quiz balance tokens"
+                subtitle="Acquire two organizations: Pick from Bucket 1 in Round 1 (round robin), and participate in the Live Auction"
               >
                 {/* Mode Selector Tabs: Round 1 Selection and Live Auction Showcase */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-2 bg-paper/60 rounded-lg border border-mist mb-6">
@@ -1780,7 +1774,7 @@ export const TeamPortal: React.FC = () => {
                         </div>
                       </div>
                     ) : quizHasSubmitted ? (
-                      /* Submitted State: Questions are HIDDEN, answers locked, token status shown */
+                      /* Submitted State: Questions are HIDDEN, answers locked, only submission reference and bidding will start soon */
                       <div className="p-8 bg-paper rounded-xl border border-mist text-center space-y-6">
                         <div className="w-16 h-16 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center text-3xl mx-auto text-emerald-600 shadow-xs">
                           <CheckCircle2 className="w-8 h-8" />
@@ -1799,8 +1793,16 @@ export const TeamPortal: React.FC = () => {
                           </p>
                         </div>
 
+                        {/* Assessment Submission Reference */}
                         <div className="max-w-md mx-auto p-4 bg-white rounded-lg border border-mist shadow-xs text-left space-y-3">
                           <div className="flex items-center justify-between text-xs">
+                            <span className="text-ink-muted font-medium">Submission Status:</span>
+                            <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Recorded & Finalized
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs border-t border-mist/60 pt-2.5">
                             <span className="text-ink-muted font-medium">Submission Timestamp:</span>
                             <span className="font-mono font-bold text-ink">
                               {quizSubmittedAt
@@ -1813,32 +1815,21 @@ export const TeamPortal: React.FC = () => {
                             </span>
                           </div>
                           <div className="flex items-center justify-between text-xs border-t border-mist/60 pt-2.5">
-                            <span className="text-ink-muted font-medium">Tie-Breaker Rule:</span>
-                            <span className="text-emerald-700 font-semibold">
-                              Timestamp Recorded (Earlier wins ties)
+                            <span className="text-ink-muted font-medium">Tie-Breaker Priority:</span>
+                            <span className="text-ink font-semibold">
+                              Timestamp Recorded
                             </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs border-t border-mist/60 pt-2.5">
-                            <span className="text-ink-muted font-medium">Bidding Token Allocation:</span>
-                            {teamBalance?.tokensReleased ? (
-                              <span className="font-mono font-bold text-signal">
-                                {teamBalance.remainingBalance} Tokens Available
-                              </span>
-                            ) : (
-                              <span className="text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60">
-                                Pending Coordinator Release
-                              </span>
-                            )}
                           </div>
                         </div>
 
-                        <div className="p-3.5 bg-amber-50/70 rounded-lg border border-amber-200 max-w-md mx-auto text-left text-xs text-amber-900 space-y-1">
-                          <span className="font-bold flex items-center gap-1.5 text-amber-950">
-                            <Clock className="w-3.5 h-3.5 text-amber-600" />
-                            Bidding Budget Distribution Note
+                        {/* Bidding Will Start Soon Notice */}
+                        <div className="p-4 bg-signal/5 rounded-xl border border-signal/20 max-w-md mx-auto text-left text-xs space-y-1.5">
+                          <span className="font-bold flex items-center gap-1.5 text-ink">
+                            <Clock className="w-3.5 h-3.5 text-signal" />
+                            The Bidding Will Start Soon
                           </span>
-                          <p className="text-[11px] text-amber-800 leading-relaxed">
-                            Auction bidding tokens will be distributed once coordinators finalize evaluations and tie-breaking adjustments. You will be able to bid in the live auction as soon as tokens are released.
+                          <p className="text-[11px] text-ink-muted leading-relaxed">
+                            Your assessment has been submitted. The live bidding will start soon. Please remain on standby for the coordinators to open the auction floor.
                           </p>
                         </div>
 
@@ -1849,21 +1840,18 @@ export const TeamPortal: React.FC = () => {
                             icon={<RotateCw className="w-3.5 h-3.5" />}
                             onClick={() => {
                               loadQuizData(false);
-                              loadTeamData(true);
                             }}
                           >
-                            Check Allocation Status
+                            Refresh Status
                           </Button>
-                          {teamBalance?.tokensReleased && (
-                            <Button
-                              variant="primary"
-                              size="sm"
-                              onClick={() => setCompanySubTab('auction')}
-                              icon={<Gavel className="w-3.5 h-3.5" />}
-                            >
-                              Go to Live Auction Showcase
-                            </Button>
-                          )}
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => setCompanySubTab('auction')}
+                            icon={<Gavel className="w-3.5 h-3.5" />}
+                          >
+                            View Live Auction Floor
+                          </Button>
                         </div>
                       </div>
                     ) : (

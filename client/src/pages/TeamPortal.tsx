@@ -37,22 +37,76 @@ import {
 export const TeamPortal: React.FC = () => {
   const { user, participant, team, isLeader } = useAuth();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
+  const subTabParam = searchParams.get('subtab');
 
-  // Navigation / Section State (persisted across page reloads)
-  const [activeSection, setActiveSection] = useState<
-    'cleaning' | 'requirements' | 'leaderboard' | 'companies' | 'final'
-  >(() => {
-    if (tabParam === 'companies' || tabParam === 'final' || tabParam === 'leaderboard') {
-      return tabParam as any;
+  type TeamSection = 'cleaning' | 'requirements' | 'leaderboard' | 'companies' | 'final';
+  type CompanySubTab = 'queue1' | 'quiz' | 'auction' | 'queue2';
+
+  const isValidSection = (s: string | null): s is TeamSection => {
+    return !!s && ['cleaning', 'requirements', 'leaderboard', 'companies', 'final'].includes(s);
+  };
+
+  const isValidCompanySubTab = (st: string | null): st is CompanySubTab => {
+    return !!st && ['queue1', 'quiz', 'auction', 'queue2'].includes(st);
+  };
+
+  // Navigation / Section State (persisted across page reloads & URL synced)
+  const [activeSection, setActiveSectionState] = useState<TeamSection>(() => {
+    if (isValidSection(tabParam)) {
+      return tabParam;
+    }
+    const saved = localStorage.getItem('synapse_preview_section');
+    if (isValidSection(saved)) {
+      return saved;
     }
     return 'cleaning';
   });
+
+  const handleSelectSection = (sec: TeamSection) => {
+    setActiveSectionState(sec);
+    localStorage.setItem('synapse_preview_section', sec);
+    if ((team as any)?._id) {
+      localStorage.setItem(`synapse_preview_section_${(team as any)._id}`, sec);
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', sec);
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
   const [isEvaluated, setIsEvaluated] = useState<boolean>(false);
 
   // Company selection subtabs: Queue 1 (Round Robin), Knowledge Assessment (Quiz), Live Auction floor, or Queue 2
-  const [companySubTab, setCompanySubTab] = useState<'queue1' | 'quiz' | 'auction' | 'queue2'>('queue1');
+  const [companySubTab, setCompanySubTabState] = useState<CompanySubTab>(() => {
+    if (isValidCompanySubTab(subTabParam)) {
+      return subTabParam;
+    }
+    const saved = localStorage.getItem('synapse_company_subtab');
+    if (isValidCompanySubTab(saved)) {
+      return saved;
+    }
+    return 'queue1';
+  });
+
+  const handleSelectCompanySubTab = (st: CompanySubTab) => {
+    setCompanySubTabState(st);
+    localStorage.setItem('synapse_company_subtab', st);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('subtab', st);
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
   const [teamBalance, setTeamBalance] = useState<TeamAuctionBalance | null>(null);
   const [assignedCompanies, setAssignedCompanies] = useState<Array<{ id: string; name: string; description: string; source: string }>>([]);
   const [hasSelectedTwoCompanies, setHasSelectedTwoCompanies] = useState<boolean>(false);
@@ -325,42 +379,35 @@ export const TeamPortal: React.FC = () => {
         });
       }
 
-      // 3. Restore last previewed section from localStorage
-      const savedSection = localStorage.getItem(`synapse_preview_section_${teamId}`) as
-        | 'cleaning'
-        | 'requirements'
-        | 'leaderboard'
-        | 'companies'
-        | 'final'
-        | null;
+      // 3. Keep current active section or restore from URL / localStorage
+      const urlTab = searchParams.get('tab') as TeamSection | null;
+      const savedSection = (localStorage.getItem(`synapse_preview_section_${teamId}`) || localStorage.getItem('synapse_preview_section')) as TeamSection | null;
 
-      if (savedSection) {
-        // Validate that savedSection is accessible
-        if (savedSection === 'final') {
-          setActiveSection('final');
-        } else if (savedSection === 'companies') {
-          setActiveSection('companies');
-        } else if (savedSection === 'leaderboard' && data.hasSubmittedCleaning) {
-          setActiveSection('leaderboard');
-        } else if (savedSection === 'requirements' && data.hasSubmittedCleaning) {
-          setActiveSection('requirements');
-        } else if (savedSection === 'cleaning') {
-          setActiveSection('cleaning');
-        } else if (data.hasSubmittedFinal) {
-          setActiveSection('final');
-        } else if (data.hasSubmittedCleaning) {
-          setActiveSection('requirements');
-        } else {
-          setActiveSection('cleaning');
-        }
+      const targetSec: TeamSection = isValidSection(urlTab)
+        ? urlTab
+        : isValidSection(activeSection)
+        ? activeSection
+        : isValidSection(savedSection)
+        ? savedSection
+        : 'cleaning';
+
+      if (targetSec === 'requirements' && !data.hasSubmittedCleaning) {
+        handleSelectSection('cleaning');
+      } else if (targetSec === 'leaderboard' && !data.hasSubmittedCleaning) {
+        handleSelectSection('cleaning');
+      } else if (targetSec === 'final' && !data.hasSubmittedCleaning) {
+        handleSelectSection('cleaning');
       } else {
-        // Default to latest unlocked
-        if (data.hasSubmittedFinal) {
-          setActiveSection('final');
-        } else if (data.hasSubmittedCleaning) {
-          setActiveSection('requirements');
-        } else {
-          setActiveSection('cleaning');
+        setActiveSectionState(targetSec);
+        if (!urlTab || urlTab !== targetSec) {
+          setSearchParams(
+            (prev) => {
+              const next = new URLSearchParams(prev);
+              next.set('tab', targetSec);
+              return next;
+            },
+            { replace: true }
+          );
         }
       }
     } catch (err: any) {
@@ -568,20 +615,6 @@ export const TeamPortal: React.FC = () => {
     return () => clearInterval(interval);
   }, [teamId]);
 
-  useEffect(() => {
-    if (finalSubmissionOpen && !hasSubmittedFinal) {
-      setActiveSection('final');
-    }
-  }, [finalSubmissionOpen, hasSubmittedFinal]);
-
-  // Handle section switch & persist in localStorage
-  const handleSelectSection = (sec: 'cleaning' | 'requirements' | 'leaderboard' | 'companies' | 'final') => {
-    setActiveSection(sec);
-    if (teamId) {
-      localStorage.setItem(`synapse_preview_section_${teamId}`, sec);
-    }
-  };
-
   const handleSaveFinalDraft = async () => {
     setSaving(true);
     setNotice(null);
@@ -594,6 +627,7 @@ export const TeamPortal: React.FC = () => {
       });
       setFinalSubmission(res.submission);
       setNotice({ type: 'success', message: 'Final project draft saved successfully.' });
+      handleSelectSection('final');
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Failed to save draft.' });
     } finally {
@@ -634,6 +668,8 @@ export const TeamPortal: React.FC = () => {
       setHasSubmittedFinal(true);
       setConfirmFinalModal(false);
       setNotice({ type: 'success', message: 'Final project submitted successfully! Challenge completed.' });
+      handleSelectSection('final');
+      await loadTeamData(true);
     } catch (err: any) {
       setFinalSubmitError(err.message || 'Failed to submit final project.');
     } finally {
@@ -846,39 +882,6 @@ export const TeamPortal: React.FC = () => {
         title="No Team Linked"
         description={`Your account (${user.email}) is not linked to a registered team. Contact staff if you believe this is an error.`}
       />
-    );
-  }
-
-  if (isEvaluated && (activeSection === 'cleaning' || activeSection === 'requirements')) {
-    return (
-      <div className="space-y-6">
-        <Card title="Evaluation Complete" subtitle="Your submission has been reviewed by the evaluation committee.">
-          <div className="p-6 text-center space-y-4">
-            <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-ink">Evaluation Finalized</h3>
-              <p className="text-xs text-ink-muted max-w-md mx-auto mt-1">
-                Your dataset cleaning submission has been officially reviewed. Standings and verified rankings are available on the Leaderboard.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-              <Link to="/leaderboard" className="btn-primary inline-flex items-center gap-2 text-xs">
-                <Award className="w-4 h-4" />
-                View Leaderboard Standings
-              </Link>
-              <button
-                onClick={() => setActiveSection('companies')}
-                className="btn-secondary inline-flex items-center gap-2 text-xs"
-              >
-                <Building2 className="w-4 h-4" />
-                Proceed to Company Selection
-              </button>
-            </div>
-          </div>
-        </Card>
-      </div>
     );
   }
 
@@ -1229,6 +1232,26 @@ export const TeamPortal: React.FC = () => {
           {/* ========================================================= */}
           {activeSection === 'cleaning' && (
             <div className="space-y-6">
+              {isEvaluated && (
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-950 shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <span className="font-bold text-sm block">Evaluation Complete</span>
+                      <span className="text-emerald-800">Your dataset cleaning submission has been reviewed by the evaluation committee.</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button variant="secondary" size="sm" onClick={() => handleSelectSection('leaderboard')}>
+                      Leaderboard Standings →
+                    </Button>
+                    <Button variant="primary" size="sm" onClick={() => handleSelectSection('companies')}>
+                      Company Selection →
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Raw Dataset Download Card */}
               {cleaningDataset && cleaningDataset.fileUrl ? (
                 <div className="bg-white rounded-lg border border-mist p-6 shadow-sm">
@@ -1355,6 +1378,26 @@ export const TeamPortal: React.FC = () => {
           {/* ========================================================= */}
           {activeSection === 'requirements' && (
             <div className="space-y-6">
+              {isEvaluated && (
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-950 shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <span className="font-bold text-sm block">Evaluation Complete</span>
+                      <span className="text-emerald-800">Your dataset cleaning submission has been reviewed by the evaluation committee.</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button variant="secondary" size="sm" onClick={() => handleSelectSection('leaderboard')}>
+                      Leaderboard Standings →
+                    </Button>
+                    <Button variant="primary" size="sm" onClick={() => handleSelectSection('companies')}>
+                      Company Selection →
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               <Card
                 title="Stage 2: Validation Dataset & Evaluation"
                 subtitle="Download the official validation dataset once your mentor approves your cleaned dataset, and review evaluation feedback"
@@ -1618,7 +1661,7 @@ export const TeamPortal: React.FC = () => {
                   <div className="flex items-center gap-2 overflow-x-auto">
                     <button
                       onClick={() => {
-                        setCompanySubTab('queue1');
+                        handleSelectCompanySubTab('queue1');
                         setActiveQueueTab(1);
                       }}
                       className={`px-4 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${
@@ -1642,7 +1685,7 @@ export const TeamPortal: React.FC = () => {
 
                     <button
                       onClick={() => {
-                        setCompanySubTab('quiz');
+                        handleSelectCompanySubTab('quiz');
                         loadQuizData(true);
                       }}
                       className={`px-4 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${
@@ -1669,7 +1712,7 @@ export const TeamPortal: React.FC = () => {
                     </button>
 
                     <button
-                      onClick={() => setCompanySubTab('auction')}
+                      onClick={() => handleSelectCompanySubTab('auction')}
                       className={`px-4 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${
                         companySubTab === 'auction'
                           ? 'bg-ink text-white shadow-sm'
@@ -1841,7 +1884,7 @@ export const TeamPortal: React.FC = () => {
                           <Button
                             variant="primary"
                             size="sm"
-                            onClick={() => setCompanySubTab('auction')}
+                            onClick={() => handleSelectCompanySubTab('auction')}
                             icon={<Gavel className="w-3.5 h-3.5" />}
                           >
                             View Live Auction Floor

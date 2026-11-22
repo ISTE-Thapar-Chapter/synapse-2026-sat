@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
 import { useStage } from '../context/StageContext.js';
 import { api } from '../services/api.js';
@@ -69,15 +69,93 @@ export const StaffPortal: React.FC = () => {
   const isEvaluator = user?.role === 'evaluator';
   const isDesk = user?.role === 'desk';
 
-  const [activeTab, setActiveTab] = useState<
-    'mentor' | 'quiz' | 'auction' | 'evaluations' | 'config' | 'roundrobin' | 'imports' | 'teams' | 'accounts' | 'leaderboard' | 'audit'
-  >(isDesk ? 'teams' : isMentor ? 'mentor' : isAdmin ? 'config' : 'evaluations');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+
+  type StaffTab =
+    | 'mentor'
+    | 'quiz'
+    | 'auction'
+    | 'evaluations'
+    | 'config'
+    | 'roundrobin'
+    | 'imports'
+    | 'teams'
+    | 'accounts'
+    | 'leaderboard'
+    | 'audit';
+
+  const isValidStaffTab = (tab: string | null, role?: string): boolean => {
+    if (!tab || !role) return false;
+    if (role === 'desk') return tab === 'teams';
+    if (role === 'mentor') return ['mentor', 'evaluations', 'leaderboard'].includes(tab);
+    if (role === 'evaluator') return ['evaluations', 'quiz', 'mentor', 'leaderboard'].includes(tab);
+    if (role === 'admin') {
+      return [
+        'mentor',
+        'quiz',
+        'auction',
+        'evaluations',
+        'config',
+        'roundrobin',
+        'imports',
+        'teams',
+        'accounts',
+        'leaderboard',
+        'audit',
+      ].includes(tab);
+    }
+    return false;
+  };
+
+  const getDefaultStaffTab = (role?: string): StaffTab => {
+    if (role === 'desk') return 'teams';
+    if (role === 'mentor') return 'mentor';
+    if (role === 'evaluator') return 'evaluations';
+    return 'config';
+  };
+
+  const [activeTab, setActiveTabState] = useState<StaffTab>(() => {
+    if (isValidStaffTab(tabParam, user?.role)) {
+      return tabParam as StaffTab;
+    }
+    const saved = localStorage.getItem('synapse_staff_tab');
+    if (isValidStaffTab(saved, user?.role)) {
+      return saved as StaffTab;
+    }
+    return getDefaultStaffTab(user?.role);
+  });
+
+  const setActiveTab = (tab: StaffTab) => {
+    setActiveTabState(tab);
+    localStorage.setItem('synapse_staff_tab', tab);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('tab', tab);
+        return next;
+      },
+      { replace: true }
+    );
+  };
 
   useEffect(() => {
-    if (isDesk && activeTab !== 'teams') {
-      setActiveTab('teams');
+    if (!user) return;
+    const urlTab = searchParams.get('tab');
+    if (isValidStaffTab(urlTab, user.role)) {
+      if (activeTab !== urlTab) setActiveTabState(urlTab as StaffTab);
+      return;
     }
-  }, [isDesk, activeTab]);
+    const saved = localStorage.getItem('synapse_staff_tab');
+    if (isValidStaffTab(saved, user.role)) {
+      if (activeTab !== saved) setActiveTabState(saved as StaffTab);
+      return;
+    }
+    const def = getDefaultStaffTab(user.role);
+    if (activeTab !== def && !isValidStaffTab(activeTab, user.role)) {
+      setActiveTab(def);
+    }
+  }, [user]);
 
   const isSafeUrl = (url?: string): boolean => !!url && /^https?:\/\//i.test(url.trim());
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -649,11 +727,22 @@ export const StaffPortal: React.FC = () => {
   const loadMentorData = async () => {
     try {
       const res = await api.get<{ teams: any[] }>('/mentor/teams');
-      setMentorTeams(res.teams || []);
+      const teams = res.teams || [];
+      setMentorTeams(teams);
       const finalRes = await api.get<{ submissions: any[] }>('/mentor/final-submissions');
       setMentorFinalSubmissions(finalRes.submissions || []);
+
+      const savedMentorTeamId = sessionStorage.getItem('synapse_staff_mentor_team');
+      if (savedMentorTeamId) {
+        const found = teams.find((t: any) => t.teamId === savedMentorTeamId || t._id === savedMentorTeamId);
+        if (found) {
+          selectTeamForMentorGrading(found);
+        }
+      }
+      return teams;
     } catch (err) {
       console.error('[Mentor] Error loading teams:', err);
+      return [];
     }
   };
 
@@ -680,6 +769,7 @@ export const StaffPortal: React.FC = () => {
 
   const selectTeamForMentorGrading = (teamItem: any) => {
     setActiveMentorTeam(teamItem);
+    sessionStorage.setItem('synapse_staff_mentor_team', teamItem.teamId || teamItem._id);
     const existing = teamItem.mentorEvaluation;
     // Default accuracy and confidence score should be 0, which mentors will fill up
     setMentorAccuracy(existing ? (existing.overallAccuracyScore ?? 0) : 0);
@@ -704,6 +794,11 @@ export const StaffPortal: React.FC = () => {
     });
 
     setMentorGrades(grades);
+  };
+
+  const handleCloseMentorPanel = () => {
+    setActiveMentorTeam(null);
+    sessionStorage.removeItem('synapse_staff_mentor_team');
   };
 
   const handleMentorGradeChange = (
@@ -738,8 +833,13 @@ export const StaffPortal: React.FC = () => {
 
       await api.post('/mentor/grade-features', payload);
       setNotice({ type: 'success', message: `Evaluation review submitted successfully for ${activeMentorTeam.teamName}!` });
-      setActiveMentorTeam(null);
-      await loadMentorData();
+      const updatedTeams = await loadMentorData();
+      if (updatedTeams) {
+        const refreshed = updatedTeams.find((t: any) => t.teamId === activeMentorTeam.teamId || t._id === activeMentorTeam.teamId);
+        if (refreshed) {
+          selectTeamForMentorGrading(refreshed);
+        }
+      }
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Failed to submit mentor review.' });
     } finally {
@@ -1773,7 +1873,7 @@ export const StaffPortal: React.FC = () => {
               title={`Mentor Review: ${activeMentorTeam.teamName}`}
               subtitle="Review cleaned dataset submission, fill Accuracy & Confidence scores, and manage validation dataset access."
               action={
-                <Button variant="secondary" size="sm" onClick={() => setActiveMentorTeam(null)}>
+                <Button variant="secondary" size="sm" onClick={handleCloseMentorPanel}>
                   Close Review Panel
                 </Button>
               }
@@ -1970,7 +2070,7 @@ export const StaffPortal: React.FC = () => {
                 </div>
 
                 <div className="flex items-center justify-end gap-3 pt-4 border-t border-mist">
-                  <Button variant="secondary" onClick={() => setActiveMentorTeam(null)}>
+                  <Button variant="secondary" onClick={handleCloseMentorPanel}>
                     Cancel
                   </Button>
                   <Button variant="primary" loading={mentorSubmitting} onClick={handleSaveMentorGrades}>

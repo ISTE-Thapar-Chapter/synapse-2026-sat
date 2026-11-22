@@ -521,21 +521,21 @@ describe('Full Synapse 2026 Event Workflow', () => {
       .set('Authorization', `Bearer ${evaluatorToken}`);
     expect(releaseRes.status).toBe(200);
 
-    // 2. Team Alpha checks their balance: 8.5 * 100 = 850 Tokens (quizMarks hidden from participants)
+    // 2. Team Alpha checks their balance: 8.5 * 100000 = 850000 Tokens (quizMarks hidden from participants)
     const balanceResA = await request(app)
       .get('/api/auction/my-balance')
       .set('Authorization', `Bearer ${leaderTokenA}`);
     expect(balanceResA.status).toBe(200);
     expect(balanceResA.body.quizMarks).toBeUndefined();
-    expect(balanceResA.body.initialTokens).toBe(850);
-    expect(balanceResA.body.remainingBalance).toBe(850);
+    expect(balanceResA.body.initialTokens).toBe(850000);
+    expect(balanceResA.body.remainingBalance).toBe(850000);
 
-    // 3. Team Beta checks their balance: 6.5 * 100 = 650 Tokens
+    // 3. Team Beta checks their balance: 6.5 * 100000 = 650000 Tokens
     const balanceResB = await request(app)
       .get('/api/auction/my-balance')
       .set('Authorization', `Bearer ${leaderTokenB}`);
     expect(balanceResB.status).toBe(200);
-    expect(balanceResB.body.remainingBalance).toBe(650);
+    expect(balanceResB.body.remainingBalance).toBe(650000);
   });
 
   it('8. Live Auction Floor: Bucket 2 companies management, bidding, assignment, and admin reassignments', async () => {

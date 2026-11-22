@@ -36,6 +36,14 @@ router.get('/live', async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+export function getRandomCompanyTokenPrice(): number {
+  // Random price between 100,000 and 2,000,000 in increments of 50,000
+  const min = 2; // 2 * 50,000 = 100,000
+  const max = 40; // 40 * 50,000 = 2,000,000
+  const step = Math.floor(Math.random() * (max - min + 1)) + min;
+  return step * 50000;
+}
+
 /**
  * Public route: Get all Bucket 2 auction companies
  */
@@ -44,20 +52,60 @@ router.get('/companies', async (req: Request, res: Response, next: NextFunction)
     let config = await CompetitionConfig.findOne();
     if (!config) config = await CompetitionConfig.create({});
 
-    // Seed defaults if empty or containing placeholder mock companies
+    // Seed defaults if empty or containing placeholder mock companies or legacy flat 50 basePrice
     const hasLegacyDefaults = config.auctionCompanies && config.auctionCompanies.some((c) => c.name === 'DeepMind Robotics' || c.name === 'OpenAI Infrastructure');
+    const hasLegacyPrices = config.auctionCompanies && config.auctionCompanies.some((c) => c.basePrice === 50);
+
     if (!config.auctionCompanies || config.auctionCompanies.length === 0 || hasLegacyDefaults) {
       config.auctionCompanies = NON_TECHNOLOGY_COMPANIES.map((c, idx) => ({
         id: `auc_${idx + 1}`,
         name: c.name,
         description: c.description,
-        basePrice: 50,
+        basePrice: getRandomCompanyTokenPrice(),
         isAssigned: false,
+      }));
+      await config.save();
+    } else if (hasLegacyPrices) {
+      // Randomize tokens count for existing companies that still have legacy 50
+      config.auctionCompanies = config.auctionCompanies.map((c) => ({
+        ...c,
+        basePrice: c.basePrice === 50 ? getRandomCompanyTokenPrice() : (c.basePrice || getRandomCompanyTokenPrice()),
       }));
       await config.save();
     }
 
     return res.json({
+      companies: config.auctionCompanies,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Admin route: Randomize token costs for all Bucket 2 companies
+ */
+router.post('/companies/randomize', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    config.auctionCompanies = (config.auctionCompanies || []).map((c: any) => ({
+      ...(c.toObject ? c.toObject() : c),
+      basePrice: getRandomCompanyTokenPrice(),
+    }));
+    await config.save();
+
+    await logAudit(
+      req.user!.email,
+      'AUCTION_COMPANIES_RANDOMIZED',
+      'CompetitionConfig',
+      config._id.toString(),
+      { count: config.auctionCompanies.length }
+    );
+
+    return res.json({
+      message: 'Company token counts randomized successfully.',
       companies: config.auctionCompanies,
     });
   } catch (err) {

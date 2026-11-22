@@ -57,6 +57,7 @@ export interface IQuizQuestion {
   image?: string;
   type?: string;
   points?: number;
+  difficulty?: 'easy' | 'medium' | 'hard' | string;
 }
 
 export interface IWinnersAnnouncement {
@@ -153,7 +154,7 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
     },
     quizMultiplier: {
       type: Number,
-      default: 100,
+      default: 100000,
     },
     quizStatus: {
       type: String,
@@ -177,6 +178,7 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
         image: { type: String, default: '' },
         type: { type: String, default: 'multiple_choice' },
         points: { type: Number, default: 1 },
+        difficulty: { type: String, enum: ['easy', 'medium', 'hard'], default: 'easy' },
       },
     ],
     liveAuction: {

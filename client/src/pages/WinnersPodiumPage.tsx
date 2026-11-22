@@ -63,6 +63,13 @@ export const WinnersPodiumPage: React.FC<WinnersPodiumPageProps> = ({
     <div className="min-h-screen bg-paper flex flex-col justify-between py-6 sm:py-10 px-3 sm:px-6 lg:px-8 text-ink selection:bg-signal selection:text-white">
       {/* Top Brand Header */}
       <div className="max-w-4xl mx-auto text-center space-y-2 sm:space-y-3">
+        <div className="flex justify-center items-center mb-1">
+          <img
+            src="/synapse-image.png"
+            alt="Synapse 2026 Logo"
+            className="h-14 sm:h-20 w-auto object-contain drop-shadow-md"
+          />
+        </div>
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-signal/10 border border-signal/20 text-signal text-xs font-bold uppercase tracking-widest animate-pulse">
           <Sparkles className="w-3.5 h-3.5" />
           <span>Official Results &bull; Synapse 2026</span>

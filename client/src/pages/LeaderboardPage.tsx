@@ -44,6 +44,24 @@ export const LeaderboardPage: React.FC = () => {
         </div>
       )}
 
+      {leaderboardVisible && (
+        <div className="p-4 bg-signal/10 border border-signal/20 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 text-xs shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <Award className="w-5 h-5 text-signal shrink-0" />
+            <div>
+              <span className="font-bold text-ink block">Leaderboard Scoring Released</span>
+              <p className="text-ink-muted">Official verified standings are unmasked. Proceed to Round Robin Queue 1 to select your first company.</p>
+            </div>
+          </div>
+          <Link
+            to="/team?tab=companies"
+            className="px-3.5 py-1.5 rounded-md bg-signal text-white font-bold hover:bg-signal/90 transition-all shrink-0 inline-flex items-center gap-1.5"
+          >
+            Select Company (Round Robin) &rarr;
+          </Link>
+        </div>
+      )}
+
       <Card
         title="Official Competition Leaderboard"
         subtitle={

@@ -138,11 +138,11 @@ afterAll(async () => {
 });
 
 describe('Automated Knowledge Assessment (Quiz) System', () => {
-  it('should initialize quiz with 25 questions and not_started status', async () => {
+  it('should initialize quiz with 20 questions and not_started status', async () => {
     const res = await request(app).get('/api/quiz/status');
     expect(res.status).toBe(200);
     expect(res.body.quizStatus).toBe('not_started');
-    expect(res.body.totalQuestions).toBe(25);
+    expect(res.body.totalQuestions).toBe(20);
     expect(res.body.hasSubmitted).toBe(false);
   });
 
@@ -171,7 +171,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
       .get('/api/quiz/questions')
       .set('Authorization', `Bearer ${team1LeaderToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.questions).toHaveLength(25);
+    expect(res.body.questions).toHaveLength(20);
 
     // Verify answers are strictly stripped
     for (const q of res.body.questions) {
@@ -188,7 +188,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
       .get('/api/quiz/admin/questions')
       .set('Authorization', `Bearer ${evaluatorToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.questions).toHaveLength(25);
+    expect(res.body.questions).toHaveLength(20);
     expect(res.body.questions[0]).toHaveProperty('correct');
   });
 
@@ -197,7 +197,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
       .get('/api/quiz/questions')
       .set('Authorization', `Bearer ${team1MemberToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.questions).toHaveLength(25);
+    expect(res.body.questions).toHaveLength(20);
     // Answers must be stripped
     expect(res.body.questions[0]).not.toHaveProperty('correct');
   });
@@ -322,7 +322,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
     const res = await request(app)
       .post(`/api/auction/staff/quiz-score/${team2._id}`)
       .set('Authorization', `Bearer ${evaluatorToken}`)
-      .send({ quizMarks: 20, multiplier: 100 });
+      .send({ quizMarks: 20, multiplier: 100000 });
 
     expect(res.status).toBe(200);
 
@@ -341,11 +341,11 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
     expect(releaseRes.body.success).toBe(true);
     expect(releaseRes.body.quizTokensReleased).toBe(true);
 
-    // Verify Team 2 (20 marks * 100) now has 2000 tokens
+    // Verify Team 2 (20 marks * 100000) now has 2000000 tokens
     const qs2 = await QuizScore.findOne({ teamId: team2._id });
     expect(qs2?.tokensReleased).toBe(true);
-    expect(qs2?.auctionBalance).toBe(2000);
-    expect(qs2?.remainingBalance).toBe(2000);
+    expect(qs2?.auctionBalance).toBe(2000000);
+    expect(qs2?.remainingBalance).toBe(2000000);
 
     // Verify Team 2 can see their balance in my-balance
     const bal2 = await request(app)
@@ -353,7 +353,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
       .set('Authorization', `Bearer ${team2LeaderToken}`);
     expect(bal2.status).toBe(200);
     expect(bal2.body.tokensReleased).toBe(true);
-    expect(bal2.body.remainingBalance).toBe(2000);
+    expect(bal2.body.remainingBalance).toBe(2000000);
   });
 
   it('should allow admin to edit questions via PUT /api/quiz/admin/questions', async () => {
@@ -391,5 +391,46 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
 
     expect(submitRes.status).toBe(400);
     expect(submitRes.body.error).toBe('Assessment Closed');
+  });
+
+  it('should have exactly 20 questions split into 8 easy (1pt), 7 medium (2pt), 5 hard (3pt)', async () => {
+    const res = await request(app)
+      .get('/api/quiz/admin/questions')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    const questions = res.body.questions;
+    expect(questions).toHaveLength(20);
+
+    const easy = questions.filter((q: any) => q.difficulty === 'easy' && q.points === 1);
+    const medium = questions.filter((q: any) => q.difficulty === 'medium' && q.points === 2);
+    const hard = questions.filter((q: any) => q.difficulty === 'hard' && q.points === 3);
+
+    expect(easy).toHaveLength(8);
+    expect(medium).toHaveLength(7);
+    expect(hard).toHaveLength(5);
+  });
+
+  it('should support randomizing token counts for auction companies', async () => {
+    const compRes = await request(app).get('/api/auction/companies');
+    expect(compRes.status).toBe(200);
+    const companies = compRes.body.companies;
+    expect(companies.length).toBeGreaterThanOrEqual(40);
+
+    // Randomize token counts via admin endpoint
+    const randRes = await request(app)
+      .post('/api/auction/companies/randomize')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(randRes.status).toBe(200);
+    expect(randRes.body.companies.length).toBeGreaterThanOrEqual(40);
+
+    // Check that prices are non-zero and varied
+    const prices = randRes.body.companies.map((c: any) => c.basePrice);
+    const uniquePrices = new Set(prices);
+    expect(uniquePrices.size).toBeGreaterThan(1);
+    for (const p of prices) {
+      expect(p).toBeGreaterThanOrEqual(100000);
+    }
   });
 });

@@ -195,7 +195,7 @@ export const StaffPortal: React.FC = () => {
 
   // Quiz Marks State (Evaluators & Admins)
   const [quizScores, setQuizScores] = useState<any[]>([]);
-  const [quizMultiplier, setQuizMultiplier] = useState<number>(100);
+  const [quizMultiplier, setQuizMultiplier] = useState<number>(100000);
   const [savingQuizScores, setSavingQuizScores] = useState<boolean>(false);
   const [savingSingleTeamId, setSavingSingleTeamId] = useState<string | null>(null);
   const [dirtyTeamIds, setDirtyTeamIds] = useState<Set<string>>(new Set());
@@ -213,7 +213,7 @@ export const StaffPortal: React.FC = () => {
   const [liveAuctionState, setLiveAuctionState] = useState<any | null>(null);
   const [auctionItemName, setAuctionItemName] = useState<string>('');
   const [auctionItemDesc, setAuctionItemDesc] = useState<string>('');
-  const [auctionBasePrice, setAuctionBasePrice] = useState<number>(50);
+  const [auctionBasePrice, setAuctionBasePrice] = useState<number>(500000);
   const [auctionActionLoading, setAuctionActionLoading] = useState<boolean>(false);
   const [selectedAssignTeamId, setSelectedAssignTeamId] = useState<string>('');
 
@@ -222,7 +222,7 @@ export const StaffPortal: React.FC = () => {
   const [teamAssignments, setTeamAssignments] = useState<any[]>([]);
   const [newAuctionCompName, setNewAuctionCompName] = useState<string>('');
   const [newAuctionCompDesc, setNewAuctionCompDesc] = useState<string>('');
-  const [newAuctionCompPrice, setNewAuctionCompPrice] = useState<number>(50);
+  const [newAuctionCompPrice, setNewAuctionCompPrice] = useState<number>(500000);
   const [reassignModalTeam, setReassignModalTeam] = useState<any | null>(null);
   const [reassignSelectedCompId, setReassignSelectedCompId] = useState<string>('');
   const [editingCompId, setEditingCompId] = useState<string | null>(null);
@@ -274,7 +274,7 @@ export const StaffPortal: React.FC = () => {
       setValDatasetUrl(cfg.validationDatasetUrl || '');
       setValDatasetDesc(cfg.validationDatasetDescription || '');
       setLeaderboardVisible(!!cfg.leaderboardVisible);
-      setQuizMultiplier(cfg.quizMultiplier || 100);
+      setQuizMultiplier(cfg.quizMultiplier || 100000);
       const reqs = [...(cfg.requirementTitles || [])];
       while (reqs.length < 5) reqs.push('');
       setReqTitles(reqs.slice(0, 5));
@@ -749,7 +749,7 @@ export const StaffPortal: React.FC = () => {
         scores: any[];
       }>('/auction/staff/quiz-scores');
       setQuizScores(quizRes.scores || []);
-      setQuizMultiplier(quizRes.multiplier || 100);
+      setQuizMultiplier(quizRes.multiplier || 100000);
       if (quizRes.quizStatus) {
         setAdminQuizStatus(quizRes.quizStatus as any);
       }
@@ -1034,6 +1034,20 @@ export const StaffPortal: React.FC = () => {
       setNotice({ type: 'success', message: 'Auction company removed from Bucket 2.' });
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Failed to delete auction company.' });
+    }
+  };
+
+  const handleRandomizeCompanyTokens = async () => {
+    if (!confirm('Randomize token counts for all organizations in Bucket 2?')) return;
+    setAuctionActionLoading(true);
+    try {
+      const res = await api.post<{ message: string; companies: any[] }>('/auction/companies/randomize');
+      setAuctionCompanies(res.companies || []);
+      setNotice({ type: 'success', message: res.message || 'Token counts randomized successfully.' });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to randomize company tokens.' });
+    } finally {
+      setAuctionActionLoading(false);
     }
   };
 
@@ -2648,9 +2662,21 @@ export const StaffPortal: React.FC = () => {
                   <h5 className="text-xs font-bold text-ink uppercase tracking-wider">
                     Configured Bucket 2 Organizations ({auctionCompanies.length})
                   </h5>
-                  <Button variant="secondary" size="sm" icon={<RotateCw className="w-3 h-3" />} onClick={loadAuctionData}>
-                    Refresh
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {isAdmin && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleRandomizeCompanyTokens}
+                        loading={auctionActionLoading}
+                      >
+                        🎲 Randomize Tokens
+                      </Button>
+                    )}
+                    <Button variant="secondary" size="sm" icon={<RotateCw className="w-3 h-3" />} onClick={loadAuctionData}>
+                      Refresh
+                    </Button>
+                  </div>
                 </div>
 
                 {auctionCompanies.length === 0 ? (

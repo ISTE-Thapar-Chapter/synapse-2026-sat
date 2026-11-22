@@ -15,9 +15,13 @@ async function getOrInitConfig() {
     config = await CompetitionConfig.create({
       quizQuestions: DEFAULT_QUIZ_QUESTIONS,
       quizStatus: 'not_started',
+      quizMultiplier: 100000,
     });
-  } else if (!config.quizQuestions || config.quizQuestions.length === 0) {
+  } else if (!config.quizQuestions || config.quizQuestions.length !== 20 || config.quizMultiplier === 100) {
     config.quizQuestions = DEFAULT_QUIZ_QUESTIONS as any;
+    if (config.quizMultiplier === 100 || !config.quizMultiplier) {
+      config.quizMultiplier = 100000;
+    }
     await config.save();
   }
   return config;
@@ -97,6 +101,7 @@ router.get('/questions', requireAuth, async (req: Request, res: Response, next: 
 
     // Strip answer key for participants
     const questions = (config.quizQuestions || []).map((q) => {
+      const difficulty = q.difficulty || (q.points === 3 ? 'hard' : q.points === 2 ? 'medium' : 'easy');
       if (isStaff) {
         return {
           id: q.id,
@@ -106,6 +111,7 @@ router.get('/questions', requireAuth, async (req: Request, res: Response, next: 
           image: q.image || '',
           type: q.type || 'multiple_choice',
           points: q.points || 1,
+          difficulty,
         };
       }
       return {
@@ -115,6 +121,7 @@ router.get('/questions', requireAuth, async (req: Request, res: Response, next: 
         image: q.image || '',
         type: q.type || 'multiple_choice',
         points: q.points || 1,
+        difficulty,
       };
     });
 
@@ -241,7 +248,7 @@ router.post('/submit', requireAuth, requireTeamLeader, async (req: Request, res:
     await submission.save();
 
     // Update QuizScore (Tokens are withheld until staff manually releases them)
-    const multiplier = config.quizMultiplier || 100;
+    const multiplier = config.quizMultiplier || 100000;
     const tokensReleased = !!config.quizTokensReleased;
     const auctionBalance = tokensReleased ? Math.round(calculatedScore * multiplier) : 0;
     const remainingBalance = tokensReleased ? Math.max(0, auctionBalance) : 0;
@@ -352,7 +359,10 @@ router.put(
             : null,
         image: typeof q.image === 'string' ? q.image.trim() : '',
         type: q.type === 'poll' ? 'poll' : 'multiple_choice',
-        points: Number(q.points) > 0 ? Number(q.points) : 1,
+        points: Number(q.points) > 0 ? Number(q.points) : (q.difficulty === 'hard' ? 3 : q.difficulty === 'medium' ? 2 : 1),
+        difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty)
+          ? q.difficulty
+          : (Number(q.points) === 3 ? 'hard' : Number(q.points) === 2 ? 'medium' : 'easy'),
       }));
 
       config.quizQuestions = sanitized as any;
@@ -429,7 +439,7 @@ router.post(
       config.quizTokensReleasedAt = new Date();
       await config.save();
 
-      const multiplier = config.quizMultiplier || 100;
+      const multiplier = config.quizMultiplier || 100000;
       const allScores = await QuizScore.find();
       for (const qs of allScores) {
         qs.tokensReleased = true;

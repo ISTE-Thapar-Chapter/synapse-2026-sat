@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
 import { api } from '../services/api.js';
 import { Card } from '../components/UI/Card.js';
@@ -37,11 +37,18 @@ import {
 export const TeamPortal: React.FC = () => {
   const { user, participant, team, isLeader } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
 
   // Navigation / Section State (persisted across page reloads)
   const [activeSection, setActiveSection] = useState<
     'cleaning' | 'requirements' | 'leaderboard' | 'companies' | 'final'
-  >('cleaning');
+  >(() => {
+    if (tabParam === 'companies' || tabParam === 'final' || tabParam === 'leaderboard') {
+      return tabParam as any;
+    }
+    return 'cleaning';
+  });
   const [isEvaluated, setIsEvaluated] = useState<boolean>(false);
 
   // Company selection subtabs: Queue 1 (Round Robin), Knowledge Assessment (Quiz), Live Auction floor, or Queue 2
@@ -176,11 +183,7 @@ export const TeamPortal: React.FC = () => {
         isEvaluated?: boolean;
       }>('/submissions/current');
 
-      if (data.isEvaluated) {
-        setIsEvaluated(true);
-        navigate('/leaderboard', { replace: true });
-        return;
-      }
+      setIsEvaluated(!!data.isEvaluated);
 
       setIsEventStarted(!!data.isEventStarted);
       setCleaningDataset(data.cleaningDataset || null);
@@ -843,8 +846,37 @@ export const TeamPortal: React.FC = () => {
     );
   }
 
-  if (isEvaluated) {
-    return <Navigate to="/leaderboard" replace />;
+  if (isEvaluated && (activeSection === 'cleaning' || activeSection === 'requirements')) {
+    return (
+      <div className="space-y-6">
+        <Card title="Evaluation Complete" subtitle="Your submission has been reviewed by the evaluation committee.">
+          <div className="p-6 text-center space-y-4">
+            <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-ink">Evaluation Finalized</h3>
+              <p className="text-xs text-ink-muted max-w-md mx-auto mt-1">
+                Your dataset cleaning and requirements methodologies have been officially reviewed. Standings and verified rankings are available on the Leaderboard.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <Link to="/leaderboard" className="btn-primary inline-flex items-center gap-2 text-xs">
+                <Award className="w-4 h-4" />
+                View Leaderboard Standings
+              </Link>
+              <button
+                onClick={() => setActiveSection('companies')}
+                className="btn-secondary inline-flex items-center gap-2 text-xs"
+              >
+                <Building2 className="w-4 h-4" />
+                Proceed to Company Selection
+              </button>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
   }
 
   const isCleaningLocked = !!cleaningSubmission?.isLocked;
@@ -1921,9 +1953,22 @@ export const TeamPortal: React.FC = () => {
                                     <span className="text-xs font-bold text-ink-muted uppercase tracking-wider">
                                       Question {qIndex + 1} of {quizQuestions.length}
                                     </span>
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-paper border border-mist text-ink">
-                                      {q.points || 1} {q.points === 1 ? 'Point' : 'Points'}
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <span
+                                        className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                          q.points === 3
+                                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                            : q.points === 2
+                                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                        }`}
+                                      >
+                                        {q.points === 3 ? 'Hard' : q.points === 2 ? 'Medium' : 'Easy'}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-paper border border-mist text-ink">
+                                        {q.points || 1} {q.points === 1 ? 'Point' : 'Points'}
+                                      </span>
+                                    </div>
                                   </div>
 
                                   <p className="text-sm font-medium text-ink leading-relaxed mb-3">

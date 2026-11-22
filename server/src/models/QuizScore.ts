@@ -35,7 +35,7 @@ const QuizScoreSchema = new Schema<IQuizScore>(
     teamId: { type: Schema.Types.ObjectId, ref: 'Team', required: true, unique: true, index: true },
     teamName: { type: String, required: true },
     quizMarks: { type: Number, default: 0 },
-    multiplier: { type: Number, default: 100 },
+    multiplier: { type: Number, default: 100000 },
     auctionBalance: { type: Number, default: 0 },
     spentTokens: { type: Number, default: 0 },
     remainingBalance: { type: Number, default: 0 },

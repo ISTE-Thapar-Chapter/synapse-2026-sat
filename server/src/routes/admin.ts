@@ -13,6 +13,8 @@ import { DatasetAssignment } from '../models/DatasetAssignment.js';
 import { CompetitionConfig } from '../models/CompetitionConfig.js';
 import { EventStage } from '../models/EventStage.js';
 import { AuditLog } from '../models/AuditLog.js';
+import { QuizSubmission } from '../models/QuizSubmission.js';
+import { QuizScore } from '../models/QuizScore.js';
 import { ImportService } from '../services/importService.js';
 import { logAudit } from '../services/auditService.js';
 import { LeaderboardService } from '../services/leaderboardService.js';
@@ -20,6 +22,7 @@ import {
   AccountCreateSchema,
   AccountRoleUpdateSchema,
   ManualTeamCreateSchema,
+  TeamUpdateSchema,
   ToggleRestrictionSchema,
   ToggleDisqualificationSchema,
   WinnersAnnouncementToggleSchema,
@@ -31,12 +34,15 @@ const upload = multer({
 });
 
 const router = Router();
-router.use(requireAuth, requireRole(['admin']));
+router.use(requireAuth);
+
+const requireAdmin = requireRole(['admin']);
+const requireAdminOrDesk = requireRole(['admin', 'desk']);
 
 // -------------------------------------------------------------
-// Account Management
+// Account Management (Admins Only)
 // -------------------------------------------------------------
-router.get('/accounts', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/accounts', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const accounts = await Account.find().sort({ createdAt: -1 });
     return res.json(accounts);
@@ -45,7 +51,7 @@ router.get('/accounts', async (req: Request, res: Response, next: NextFunction) 
   }
 });
 
-router.post('/accounts', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/accounts', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = AccountCreateSchema.parse(req.body);
     const email = parsed.email.toLowerCase().trim();
@@ -87,7 +93,7 @@ router.post('/accounts', async (req: Request, res: Response, next: NextFunction)
   }
 });
 
-router.patch('/accounts/:id/role', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/accounts/:id/role', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const parsed = AccountRoleUpdateSchema.parse(req.body);
@@ -116,7 +122,7 @@ router.patch('/accounts/:id/role', async (req: Request, res: Response, next: Nex
 // -------------------------------------------------------------
 // Participant Management
 // -------------------------------------------------------------
-router.get('/participants', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/participants', requireAdminOrDesk, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { search, college, restricted, hasTeam } = req.query;
     const query: any = {};
@@ -150,7 +156,7 @@ router.get('/participants', async (req: Request, res: Response, next: NextFuncti
   }
 });
 
-router.patch('/participants/:id/restrict', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/participants/:id/restrict', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const parsed = ToggleRestrictionSchema.parse(req.body);
@@ -184,9 +190,9 @@ router.patch('/participants/:id/restrict', async (req: Request, res: Response, n
 });
 
 // -------------------------------------------------------------
-// Team Management
+// Team Management (Admins & Registration Desk)
 // -------------------------------------------------------------
-router.get('/teams', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/teams', requireAdminOrDesk, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { search, disqualified } = req.query;
     const query: any = {};
@@ -210,7 +216,7 @@ router.get('/teams', async (req: Request, res: Response, next: NextFunction) => 
   }
 });
 
-router.post('/teams/manual', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/teams/manual', requireAdminOrDesk, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = ManualTeamCreateSchema.parse(req.body);
     const teamName = parsed.teamName.trim();
@@ -388,9 +394,187 @@ router.post('/teams/manual', async (req: Request, res: Response, next: NextFunct
 });
 
 /**
+ * Update team details: name, college, leader, and members (edit names/emails, add or remove members)
+ * Accessible by: admin, desk
+ */
+router.put('/teams/:id', requireAdminOrDesk, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const parsed = TeamUpdateSchema.parse(req.body);
+
+    const team = await Team.findById(id).populate('members');
+    if (!team) {
+      return res.status(404).json({ error: 'Team not found', message: 'Team does not exist.' });
+    }
+
+    const previousTeamName = team.teamName;
+    const newTeamName = parsed.teamName.trim();
+    const college = (parsed.college || 'Independent').trim();
+
+    // 1. Check team name uniqueness if changed
+    if (newTeamName.toLowerCase() !== previousTeamName.toLowerCase()) {
+      const escapedTeamName = newTeamName.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+      const conflict = await Team.findOne({
+        _id: { $ne: team._id },
+        teamName: { $regex: new RegExp(`^${escapedTeamName}$`, 'i') },
+      });
+      if (conflict) {
+        return res.status(400).json({ error: `A team named "${conflict.teamName}" already exists.` });
+      }
+    }
+
+    // 2. Validate member emails: check internal duplicates in payload
+    const emailSet = new Set<string>();
+    for (const m of parsed.members) {
+      const em = m.email.toLowerCase().trim();
+      if (emailSet.has(em)) {
+        return res.status(400).json({ error: `Duplicate email "${em}" specified in member list.` });
+      }
+      emailSet.add(em);
+    }
+
+    const allNewEmails = Array.from(emailSet);
+
+    // 3. Check conflict with other teams
+    const conflicting = await Participant.find({
+      email: { $in: allNewEmails },
+      teamId: { $ne: null, $nin: [team._id] },
+    }).populate('teamId', 'teamName');
+
+    if (conflicting.length > 0) {
+      const conflictNames = conflicting
+        .map((p) => `${p.email} (in "${(p.teamId as any)?.teamName || 'another team'}")`)
+        .join(', ');
+      return res.status(400).json({
+        error: `Cannot assign participants who already belong to another team: ${conflictNames}`,
+      });
+    }
+
+    // 4. Resolve who the leader is
+    let designatedLeaderEmail = parsed.leaderEmail?.toLowerCase().trim();
+    if (!designatedLeaderEmail) {
+      const explicitLeader = parsed.members.find((m) => m.role === 'leader');
+      if (explicitLeader) {
+        designatedLeaderEmail = explicitLeader.email.toLowerCase().trim();
+      } else {
+        designatedLeaderEmail = parsed.members[0].email.toLowerCase().trim();
+      }
+    }
+
+    // 5. Upsert Participant and Account for each member in the new list
+    const updatedMemberIds: mongoose.Types.ObjectId[] = [];
+    let leaderParticipantId: mongoose.Types.ObjectId | null = null;
+
+    for (const m of parsed.members) {
+      const em = m.email.toLowerCase().trim();
+      const isLeader = em === designatedLeaderEmail;
+      const memName = m.name.trim();
+      const parts = memName.split(' ');
+      const firstName = parts[0];
+      const lastName = parts.length > 1 ? parts.slice(1).join(' ') : null;
+
+      // Upsert Participant
+      let p = await Participant.findOne({ email: em });
+      if (!p) {
+        p = new Participant({
+          firstName,
+          lastName,
+          email: em,
+          college,
+          teamId: team._id,
+          role: isLeader ? 'leader' : 'member',
+        });
+        await p.save();
+      } else {
+        p.firstName = firstName;
+        p.lastName = lastName;
+        p.college = college || p.college;
+        p.teamId = team._id as mongoose.Types.ObjectId;
+        p.role = isLeader ? 'leader' : 'member';
+        await p.save();
+      }
+
+      // Upsert Account for Google login identity
+      let acc = await Account.findOne({ email: em });
+      if (!acc) {
+        acc = new Account({
+          name: memName,
+          email: em,
+          role: 'public',
+        });
+        await acc.save();
+      } else {
+        if (acc.name !== memName) {
+          acc.name = memName;
+          await acc.save();
+        }
+      }
+
+      updatedMemberIds.push(p._id as mongoose.Types.ObjectId);
+      if (isLeader) {
+        leaderParticipantId = p._id as mongoose.Types.ObjectId;
+      }
+    }
+
+    // Fallback if leaderParticipantId was not matched
+    if (!leaderParticipantId && updatedMemberIds.length > 0) {
+      leaderParticipantId = updatedMemberIds[0];
+      await Participant.findByIdAndUpdate(leaderParticipantId, { role: 'leader' });
+    }
+
+    // 6. Handle removed members (participants previously in team but not in the new member list)
+    const updatedMemberIdStrs = new Set(updatedMemberIds.map((id) => id.toString()));
+    const previousMemberIds = (team.members || []).map((m: any) => (m._id || m).toString());
+
+    for (const prevId of previousMemberIds) {
+      if (!updatedMemberIdStrs.has(prevId)) {
+        await Participant.findByIdAndUpdate(prevId, {
+          teamId: null,
+          role: 'member',
+        });
+      }
+    }
+
+    // 7. Update the Team record
+    team.teamName = newTeamName;
+    team.members = updatedMemberIds;
+    team.leaderId = leaderParticipantId;
+    if (parsed.mentorName !== undefined) team.mentorName = parsed.mentorName;
+    if (parsed.mentorEmail !== undefined) team.mentorEmail = parsed.mentorEmail || null;
+    await team.save();
+
+    // 8. Propagate teamName update to other collections if renamed
+    if (newTeamName !== previousTeamName) {
+      await QuizSubmission.updateMany({ teamId: team._id }, { $set: { teamName: newTeamName } });
+      await QuizScore.updateMany({ teamId: team._id }, { $set: { teamName: newTeamName } });
+    }
+
+    // 9. Audit Log
+    await logAudit(req.user!.email, 'TEAM_UPDATED', 'Team', team._id.toString(), {
+      previousTeamName,
+      newTeamName,
+      memberCount: updatedMemberIds.length,
+      leaderEmail: designatedLeaderEmail,
+      members: parsed.members.map((m) => ({ name: m.name, email: m.email })),
+    });
+
+    const populatedTeam = await Team.findById(team._id)
+      .populate('members', 'firstName lastName email role college restricted')
+      .populate('leaderId', 'firstName lastName email');
+
+    return res.json({
+      message: 'Team updated successfully.',
+      team: populatedTeam,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Permanently delete team, all linked member participants & public accounts, and all scores/submissions
  */
-router.delete('/teams/:id', async (req: Request, res: Response, next: NextFunction) => {
+router.delete('/teams/:id', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
 
@@ -470,7 +654,7 @@ router.delete('/teams/:id', async (req: Request, res: Response, next: NextFuncti
   }
 });
 
-router.patch('/teams/:id/disqualify', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/teams/:id/disqualify', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const parsed = ToggleDisqualificationSchema.parse(req.body);
@@ -503,7 +687,7 @@ router.patch('/teams/:id/disqualify', async (req: Request, res: Response, next: 
   }
 });
 
-router.post('/teams/:id/members', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/teams/:id/members', requireAdminOrDesk, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
     const { action, participantEmail, newLeaderEmail, reason } = req.body;
@@ -582,9 +766,9 @@ router.post('/teams/:id/members', async (req: Request, res: Response, next: Next
 });
 
 // -------------------------------------------------------------
-// Import Workflow (Preview & Confirm)
+// Import Workflow (Preview & Confirm) (Admins Only)
 // -------------------------------------------------------------
-router.post('/imports/preview', upload.single('file'), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/imports/preview', requireAdmin, upload.single('file'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -603,7 +787,7 @@ router.post('/imports/preview', upload.single('file'), async (req: Request, res:
   }
 });
 
-router.post('/imports/confirm', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/imports/confirm', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { rows } = req.body;
     if (!rows || !Array.isArray(rows) || rows.length === 0) {
@@ -618,9 +802,9 @@ router.post('/imports/confirm', async (req: Request, res: Response, next: NextFu
 });
 
 // -------------------------------------------------------------
-// Datasets Management
+// Datasets Management (Admins Only)
 // -------------------------------------------------------------
-router.get('/datasets', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/datasets', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { stage } = req.query;
     const query: any = {};
@@ -636,7 +820,7 @@ router.get('/datasets', async (req: Request, res: Response, next: NextFunction) 
   }
 });
 
-router.post('/datasets', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/datasets', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { stage, title, description, fileUrl, assignedTeamId, isAvailableToAll } = req.body;
     if (!title || !fileUrl || !stage) {
@@ -666,9 +850,9 @@ router.post('/datasets', async (req: Request, res: Response, next: NextFunction)
 });
 
 // -------------------------------------------------------------
-// Audit Logs
+// Audit Logs (Admins Only)
 // -------------------------------------------------------------
-router.get('/audit-logs', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/audit-logs', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { actor, action, entityType, limit = 100 } = req.query;
     const query: any = {};
@@ -688,9 +872,9 @@ router.get('/audit-logs', async (req: Request, res: Response, next: NextFunction
 });
 
 // -------------------------------------------------------------
-// Competition Dataset & Requirements Configuration
+// Competition Dataset & Requirements Configuration (Admins Only)
 // -------------------------------------------------------------
-router.get('/config', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/config', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     let config = await CompetitionConfig.findOne();
     if (!config) {
@@ -702,7 +886,7 @@ router.get('/config', async (req: Request, res: Response, next: NextFunction) =>
   }
 });
 
-router.patch('/config', async (req: Request, res: Response, next: NextFunction) => {
+router.patch('/config', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const {
       cleaningDatasetTitle,
@@ -747,7 +931,7 @@ router.patch('/config', async (req: Request, res: Response, next: NextFunction) 
   }
 });
 
-router.post('/config/leaderboard-visibility', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/config/leaderboard-visibility', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { visible } = req.body;
     let config = await CompetitionConfig.findOne();
@@ -769,7 +953,7 @@ router.post('/config/leaderboard-visibility', async (req: Request, res: Response
   }
 });
 
-router.post('/config/final-submission-toggle', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/config/final-submission-toggle', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { open } = req.body;
     let config = await CompetitionConfig.findOne();
@@ -809,7 +993,7 @@ router.post('/config/final-submission-toggle', async (req: Request, res: Respons
 /**
  * Announce or update competition winners (Ranked 1, 2, 3)
  */
-router.post('/config/winners-toggle', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/config/winners-toggle', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = WinnersAnnouncementToggleSchema.parse(req.body);
     let config = await CompetitionConfig.findOne();
@@ -866,7 +1050,7 @@ router.post('/config/winners-toggle', async (req: Request, res: Response, next: 
 // -------------------------------------------------------------
 // Global Event Start / Pause Controls
 // -------------------------------------------------------------
-router.post('/event/start', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/event/start', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     let config = await CompetitionConfig.findOne();
     if (!config) {
@@ -896,7 +1080,7 @@ router.post('/event/start', async (req: Request, res: Response, next: NextFuncti
   }
 });
 
-router.post('/event/pause', async (req: Request, res: Response, next: NextFunction) => {
+router.post('/event/pause', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
     let config = await CompetitionConfig.findOne();
     if (!config) {

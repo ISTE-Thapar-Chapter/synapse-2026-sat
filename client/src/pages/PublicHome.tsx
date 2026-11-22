@@ -40,7 +40,7 @@ export const PublicHome: React.FC = () => {
   }
 
   // 1. Staff members are strictly redirected to /staff
-  if (user && (user.role === 'admin' || user.role === 'evaluator' || user.role === 'mentor')) {
+  if (user && (user.role === 'admin' || user.role === 'evaluator' || user.role === 'mentor' || user.role === 'desk')) {
     return <Navigate to="/staff" replace />;
   }
 

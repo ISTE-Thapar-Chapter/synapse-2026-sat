@@ -1,4 +1,4 @@
-export type AccountRole = 'public' | 'evaluator' | 'mentor' | 'admin';
+export type AccountRole = 'public' | 'evaluator' | 'mentor' | 'admin' | 'desk';
 
 export type StageIdentifier =
   | 'registration'

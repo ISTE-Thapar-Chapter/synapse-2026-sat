@@ -59,7 +59,7 @@ export const StaffPortal: React.FC = () => {
 
   // Role verification
   useEffect(() => {
-    if (!authLoading && user && user.role !== 'admin' && user.role !== 'evaluator' && user.role !== 'mentor') {
+    if (!authLoading && user && user.role !== 'admin' && user.role !== 'evaluator' && user.role !== 'mentor' && user.role !== 'desk') {
       navigate('/', { replace: true });
     }
   }, [user, authLoading, navigate]);
@@ -67,10 +67,17 @@ export const StaffPortal: React.FC = () => {
   const isAdmin = user?.role === 'admin';
   const isMentor = user?.role === 'mentor';
   const isEvaluator = user?.role === 'evaluator';
+  const isDesk = user?.role === 'desk';
 
   const [activeTab, setActiveTab] = useState<
     'mentor' | 'quiz' | 'auction' | 'evaluations' | 'config' | 'roundrobin' | 'imports' | 'teams' | 'accounts' | 'leaderboard' | 'audit'
-  >(isMentor ? 'mentor' : isAdmin ? 'config' : 'evaluations');
+  >(isDesk ? 'teams' : isMentor ? 'mentor' : isAdmin ? 'config' : 'evaluations');
+
+  useEffect(() => {
+    if (isDesk && activeTab !== 'teams') {
+      setActiveTab('teams');
+    }
+  }, [isDesk, activeTab]);
 
   const isSafeUrl = (url?: string): boolean => !!url && /^https?:\/\//i.test(url.trim());
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -139,11 +146,22 @@ export const StaffPortal: React.FC = () => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteTeamError, setDeleteTeamError] = useState<string | null>(null);
 
+  // Edit Team State
+  const [editTeamModal, setEditTeamModal] = useState(false);
+  const [teamToEdit, setTeamToEdit] = useState<Team | null>(null);
+  const [editTeamName, setEditTeamName] = useState('');
+  const [editCollege, setEditCollege] = useState('');
+  const [editMembers, setEditMembers] = useState<
+    Array<{ id?: string; name: string; email: string; isLeader: boolean }>
+  >([]);
+  const [editTeamLoading, setEditTeamLoading] = useState(false);
+  const [editTeamError, setEditTeamError] = useState<string | null>(null);
+
   // Manual Account Creation
   const [createAccountModal, setCreateAccountModal] = useState(false);
   const [newAccountName, setNewAccountName] = useState('');
   const [newAccountEmail, setNewAccountEmail] = useState('');
-  const [newAccountRole, setNewAccountRole] = useState<'admin' | 'evaluator' | 'mentor' | 'public'>('mentor');
+  const [newAccountRole, setNewAccountRole] = useState<'admin' | 'evaluator' | 'mentor' | 'desk' | 'public'>('mentor');
   const [createAccountLoading, setCreateAccountLoading] = useState(false);
   const [createAccountError, setCreateAccountError] = useState<string | null>(null);
 
@@ -1265,8 +1283,10 @@ export const StaffPortal: React.FC = () => {
       setTeams(updatedTeams);
       const updatedParticipants = await api.get<Participant[]>('/admin/participants');
       setParticipants(updatedParticipants);
-      const updatedAccounts = await api.get<any[]>('/admin/accounts');
-      setAccounts(updatedAccounts);
+      if (isAdmin) {
+        const updatedAccounts = await api.get<any[]>('/admin/accounts');
+        setAccounts(updatedAccounts);
+      }
 
       // Reset form & close modal
       setNewTeamName('');
@@ -1279,6 +1299,128 @@ export const StaffPortal: React.FC = () => {
       setCreateTeamError(err.message || 'Failed to create team.');
     } finally {
       setCreateTeamLoading(false);
+    }
+  };
+
+  // Staff (Admin/Desk): Open Edit Team Modal
+  const handleOpenEditTeamModal = (team: Team) => {
+    setTeamToEdit(team);
+    setEditTeamName(team.teamName);
+
+    // Default college from members
+    const teamCollege = (team.members?.[0] as any)?.college || 'Independent';
+    setEditCollege(teamCollege);
+
+    const leaderIdStr =
+      typeof team.leaderId === 'string'
+        ? team.leaderId
+        : (team.leaderId as any)?._id || (team.leaderId as any)?.id;
+
+    const initialMembers: Array<{ id?: string; name: string; email: string; isLeader: boolean }> = (
+      team.members || []
+    ).map((m: any) => {
+      const isLeader =
+        (leaderIdStr && String(m._id) === String(leaderIdStr)) || m.role === 'leader';
+      const fullName = `${m.firstName || ''} ${m.lastName || ''}`.trim();
+      return {
+        id: m._id ? String(m._id) : undefined,
+        name: fullName,
+        email: m.email || '',
+        isLeader: Boolean(isLeader),
+      };
+    });
+
+    if (initialMembers.length === 0) {
+      initialMembers.push({ name: '', email: '', isLeader: true });
+    } else if (!initialMembers.some((m) => m.isLeader)) {
+      initialMembers[0].isLeader = true;
+    }
+
+    setEditMembers(initialMembers);
+    setEditTeamError(null);
+    setEditTeamModal(true);
+  };
+
+  // Staff (Admin/Desk): Save Team Edits
+  const handleSaveTeamEdits = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!teamToEdit) return;
+
+    if (!editTeamName.trim()) {
+      setEditTeamError('Team name is required.');
+      return;
+    }
+
+    if (editMembers.length === 0) {
+      setEditTeamError('A team must have at least one member.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const seenEmails = new Set<string>();
+
+    for (let i = 0; i < editMembers.length; i++) {
+      const m = editMembers[i];
+      const trimmedName = m.name.trim();
+      const trimmedEmail = m.email.trim().toLowerCase();
+
+      if (!trimmedName) {
+        setEditTeamError(`Member #${i + 1} name is required.`);
+        return;
+      }
+      if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+        setEditTeamError(`Member #${i + 1} ("${trimmedName}") requires a valid email address.`);
+        return;
+      }
+      if (seenEmails.has(trimmedEmail)) {
+        setEditTeamError(`Duplicate email detected: "${trimmedEmail}". Each member must have a distinct email.`);
+        return;
+      }
+      seenEmails.add(trimmedEmail);
+    }
+
+    const leaderMember = editMembers.find((m) => m.isLeader) || editMembers[0];
+    const leaderEmail = leaderMember.email.trim().toLowerCase();
+
+    const payload = {
+      teamName: editTeamName.trim(),
+      college: editCollege.trim() || 'Independent',
+      leaderEmail,
+      members: editMembers.map((m) => ({
+        id: m.id,
+        name: m.name.trim(),
+        email: m.email.trim().toLowerCase(),
+        role: m.email.trim().toLowerCase() === leaderEmail ? ('leader' as const) : ('member' as const),
+        college: editCollege.trim() || 'Independent',
+      })),
+    };
+
+    setEditTeamLoading(true);
+    setEditTeamError(null);
+
+    try {
+      const res = await api.put<any>(`/admin/teams/${teamToEdit._id}`, payload);
+      setNotice({
+        type: 'success',
+        message: `Team "${res.team?.teamName || editTeamName}" updated successfully.`,
+      });
+
+      // Refresh data
+      const updatedTeams = await api.get<Team[]>('/admin/teams');
+      setTeams(updatedTeams);
+      const updatedParticipants = await api.get<Participant[]>('/admin/participants');
+      setParticipants(updatedParticipants);
+      if (isAdmin) {
+        const updatedAccounts = await api.get<any[]>('/admin/accounts');
+        setAccounts(updatedAccounts);
+      }
+
+      setEditTeamModal(false);
+      setTeamToEdit(null);
+    } catch (err: any) {
+      setEditTeamError(err.message || 'Failed to update team.');
+    } finally {
+      setEditTeamLoading(false);
     }
   };
 
@@ -1299,8 +1441,10 @@ export const StaffPortal: React.FC = () => {
       setTeams(updatedTeams);
       const updatedParticipants = await api.get<Participant[]>('/admin/participants');
       setParticipants(updatedParticipants);
-      const updatedAccounts = await api.get<any[]>('/admin/accounts');
-      setAccounts(updatedAccounts);
+      if (isAdmin) {
+        const updatedAccounts = await api.get<any[]>('/admin/accounts');
+        setAccounts(updatedAccounts);
+      }
       await loadQueue();
 
       setDeleteModalOpen(false);
@@ -1433,108 +1577,122 @@ export const StaffPortal: React.FC = () => {
 
       {/* Staff Navigation Tabs */}
       <div className="border-b border-mist flex gap-2 overflow-x-auto no-scrollbar">
-        {/* Mentor Grading Workspace */}
-        {(isMentor || isAdmin || isEvaluator) && (
+        {isDesk ? (
           <button
-            onClick={() => setActiveTab('mentor')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-              activeTab === 'mentor' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-            }`}
+            onClick={() => setActiveTab('teams')}
+            className="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors border-signal text-signal"
           >
-            <Award className="w-4 h-4" />
-            <span>Mentor Review (5 Feature Sets)</span>
+            <Users className="w-4 h-4" />
+            <span>Team Registration & Management</span>
           </button>
-        )}
-
-        {/* Quiz Scores & Budgets (Evaluators & Admins) */}
-        {(isAdmin || isEvaluator) && (
-          <button
-            onClick={() => setActiveTab('quiz')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-              activeTab === 'quiz' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-            }`}
-          >
-            <HelpCircle className="w-4 h-4" />
-            <span>Quiz Scores & Budgets</span>
-          </button>
-        )}
-
-        {/* Live Company Auction & Allocations (Admins Only) */}
-        {isAdmin && (
-          <button
-            onClick={() => setActiveTab('auction')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-              activeTab === 'auction' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-            }`}
-          >
-            <Gavel className="w-4 h-4" />
-            <span>Live Auction & Company Allocations</span>
-          </button>
-        )}
-
-        {isAdmin && (
-          <button
-            onClick={() => setActiveTab('config')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-              activeTab === 'config' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-            }`}
-          >
-            <FileCode className="w-4 h-4" />
-            <span>Dataset & Requirements</span>
-          </button>
-        )}
-
-        {(isAdmin || isEvaluator) && (
-          <button
-            onClick={() => setActiveTab('evaluations')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-              activeTab === 'evaluations' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-            }`}
-          >
-            <ClipboardCheck className="w-4 h-4" />
-            <span>Evaluation Workspace</span>
-          </button>
-        )}
-
-        <button
-          onClick={() => setActiveTab('roundrobin')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-            activeTab === 'roundrobin' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>Company Allocation (Round Robin)</span>
-        </button>
-
-        {isAdmin && (
+        ) : (
           <>
-            <button
-              onClick={() => setActiveTab('teams')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                activeTab === 'teams' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>Teams & Participants</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('accounts')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                activeTab === 'accounts' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-              <span>Accounts & Roles</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('audit')}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                activeTab === 'audit' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
-              }`}
-            >
-              <History className="w-4 h-4" />
-              <span>Audit Log</span>
-            </button>
+            {/* Mentor Grading Workspace */}
+            {(isMentor || isAdmin || isEvaluator) && (
+              <button
+                onClick={() => setActiveTab('mentor')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === 'mentor' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                }`}
+              >
+                <Award className="w-4 h-4" />
+                <span>Mentor Review (5 Feature Sets)</span>
+              </button>
+            )}
+
+            {/* Quiz Scores & Budgets (Evaluators & Admins) */}
+            {(isAdmin || isEvaluator) && (
+              <button
+                onClick={() => setActiveTab('quiz')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === 'quiz' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                }`}
+              >
+                <HelpCircle className="w-4 h-4" />
+                <span>Quiz Scores & Budgets</span>
+              </button>
+            )}
+
+            {/* Live Company Auction & Allocations (Admins Only) */}
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('auction')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === 'auction' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                }`}
+              >
+                <Gavel className="w-4 h-4" />
+                <span>Live Auction & Company Allocations</span>
+              </button>
+            )}
+
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('config')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === 'config' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                }`}
+              >
+                <FileCode className="w-4 h-4" />
+                <span>Dataset & Requirements</span>
+              </button>
+            )}
+
+            {(isAdmin || isEvaluator) && (
+              <button
+                onClick={() => setActiveTab('evaluations')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === 'evaluations' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                }`}
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                <span>Evaluation Workspace</span>
+              </button>
+            )}
+
+            {(isAdmin || isEvaluator) && (
+              <button
+                onClick={() => setActiveTab('roundrobin')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                  activeTab === 'roundrobin' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                }`}
+              >
+                <Building2 className="w-4 h-4" />
+                <span>Company Allocation (Round Robin)</span>
+              </button>
+            )}
+
+            {isAdmin && (
+              <>
+                <button
+                  onClick={() => setActiveTab('teams')}
+                  className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                    activeTab === 'teams' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>Teams & Participants</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('accounts')}
+                  className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                    activeTab === 'accounts' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  <Shield className="w-4 h-4" />
+                  <span>Accounts & Roles</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('audit')}
+                  className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                    activeTab === 'audit' ? 'border-signal text-signal' : 'border-transparent text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  <History className="w-4 h-4" />
+                  <span>Audit Log</span>
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
@@ -3602,7 +3760,7 @@ export const StaffPortal: React.FC = () => {
       )}
 
       {/* Tab: Teams & Participants */}
-      {isAdmin && activeTab === 'teams' && (
+      {(isAdmin || isDesk) && activeTab === 'teams' && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="relative max-w-sm flex-1">
@@ -3644,16 +3802,26 @@ export const StaffPortal: React.FC = () => {
                         <Badge variant={t.disqualified ? 'signal' : 'mist'}>{t.disqualified ? 'Disqualified' : 'Active'}</Badge>
                         <button
                           type="button"
-                          onClick={() => {
-                            setDeleteTeamError(null);
-                            setTeamToDelete(t);
-                            setDeleteModalOpen(true);
-                          }}
-                          className="p-1 rounded text-ink-muted hover:text-signal hover:bg-mist transition-colors"
-                          title="Delete Team"
+                          onClick={() => handleOpenEditTeamModal(t)}
+                          className="p-1 rounded text-ink-muted hover:text-ink hover:bg-mist transition-colors"
+                          title="Edit Team"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Edit3 className="w-3.5 h-3.5" />
                         </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteTeamError(null);
+                              setTeamToDelete(t);
+                              setDeleteModalOpen(true);
+                            }}
+                            className="p-1 rounded text-ink-muted hover:text-signal hover:bg-mist transition-colors"
+                            title="Delete Team"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -3748,6 +3916,8 @@ export const StaffPortal: React.FC = () => {
                                   ? 'saffron'
                                   : acc.role === 'mentor'
                                   ? 'navy'
+                                  : acc.role === 'desk'
+                                  ? 'success'
                                   : 'mist'
                               }
                             >
@@ -3757,6 +3927,8 @@ export const StaffPortal: React.FC = () => {
                                 ? 'Evaluator'
                                 : acc.role === 'mentor'
                                 ? 'Mentor'
+                                : acc.role === 'desk'
+                                ? 'Registration Desk'
                                 : 'Public Participant'}
                             </Badge>
                           </td>
@@ -3768,6 +3940,7 @@ export const StaffPortal: React.FC = () => {
                             >
                               <option value="mentor">Mentor</option>
                               <option value="evaluator">Evaluator</option>
+                              <option value="desk">Registration Desk</option>
                               <option value="admin">Administrator</option>
                               <option value="public">Public</option>
                             </select>
@@ -3799,6 +3972,188 @@ export const StaffPortal: React.FC = () => {
         </Card>
       )}
 
+
+      {/* Edit Team Modal */}
+      <Modal
+        isOpen={editTeamModal}
+        onClose={() => {
+          setEditTeamModal(false);
+          setTeamToEdit(null);
+        }}
+        title="Edit Team Details"
+        description="Update team name, institution/college, and manage team members and leader assignment."
+        maxWidth="lg"
+      >
+        <form onSubmit={handleSaveTeamEdits} className="space-y-4 text-xs">
+          {editTeamError && <Alert type="error">{editTeamError}</Alert>}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block font-semibold text-ink uppercase mb-1">
+                Team Name *
+              </label>
+              <input
+                type="text"
+                required
+                value={editTeamName}
+                onChange={(e) => setEditTeamName(e.target.value)}
+                placeholder="e.g. Neural Dynamics"
+                className="input-field"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-ink uppercase mb-1">
+                College / Institution
+              </label>
+              <input
+                type="text"
+                value={editCollege}
+                onChange={(e) => setEditCollege(e.target.value)}
+                placeholder="e.g. IIT Bombay / Independent"
+                className="input-field"
+              />
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-mist">
+            <div className="flex items-center justify-between mb-2">
+              <label className="block font-semibold text-ink uppercase">
+                Team Members ({editMembers.length})
+              </label>
+              <span className="text-[11px] text-ink-muted">
+                Select one member as Team Leader
+              </span>
+            </div>
+
+            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+              {editMembers.map((m, idx) => (
+                <div
+                  key={idx}
+                  className={`p-3 rounded-lg border transition-all ${
+                    m.isLeader
+                      ? 'border-signal/40 bg-signal-light/10'
+                      : 'border-mist bg-paper/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="font-semibold text-ink flex items-center gap-2">
+                      Member #{idx + 1}
+                      {m.isLeader && (
+                        <Badge variant="signal" size="sm">
+                          Team Leader
+                        </Badge>
+                      )}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditMembers(
+                            editMembers.map((mem, i) => ({
+                              ...mem,
+                              isLeader: i === idx,
+                            }))
+                          );
+                        }}
+                        className={`text-[11px] px-2 py-0.5 rounded font-medium transition-colors ${
+                          m.isLeader
+                            ? 'bg-signal text-white'
+                            : 'bg-mist text-ink-muted hover:text-ink hover:bg-mist-dark/30'
+                        }`}
+                      >
+                        {m.isLeader ? 'Leader' : 'Make Leader'}
+                      </button>
+
+                      {editMembers.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = editMembers.filter((_, i) => i !== idx);
+                            if (m.isLeader && updated.length > 0) {
+                              updated[0].isLeader = true;
+                            }
+                            setEditMembers(updated);
+                          }}
+                          className="p-1 rounded text-ink-muted hover:text-signal hover:bg-mist transition-colors"
+                          title="Remove Member"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <input
+                        type="text"
+                        required
+                        value={m.name}
+                        onChange={(e) => {
+                          const updated = [...editMembers];
+                          updated[idx].name = e.target.value;
+                          setEditMembers(updated);
+                        }}
+                        placeholder="Full Name *"
+                        className="input-field text-xs py-1.5"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="email"
+                        required
+                        value={m.email}
+                        onChange={(e) => {
+                          const updated = [...editMembers];
+                          updated[idx].email = e.target.value;
+                          setEditMembers(updated);
+                        }}
+                        placeholder="Google Account Email *"
+                        className="input-field text-xs py-1.5"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEditMembers([
+                  ...editMembers,
+                  { name: '', email: '', isLeader: editMembers.length === 0 },
+                ]);
+              }}
+              className="mt-3 text-xs font-semibold text-signal hover:text-signal-dark flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Member
+            </button>
+          </div>
+
+          <div className="pt-3 flex justify-end gap-2 border-t border-mist">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setEditTeamModal(false);
+                setTeamToEdit(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={editTeamLoading}
+              icon={<Save className="w-4 h-4" />}
+            >
+              Save Changes
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Manual Team Creation Modal */}
       <Modal
@@ -4051,6 +4406,7 @@ export const StaffPortal: React.FC = () => {
             >
               <option value="mentor">Mentor (Reviews 5 feature sets, grades accuracy & confidence)</option>
               <option value="evaluator">Evaluator (Evaluates team submissions and gives scores)</option>
+              <option value="desk">Registration Desk (Onboard teams & manage rosters)</option>
               <option value="admin">Administrator (Full portal, event control & team management)</option>
               <option value="public">Public (Team participant / observer)</option>
             </select>

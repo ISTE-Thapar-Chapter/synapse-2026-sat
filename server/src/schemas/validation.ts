@@ -141,16 +141,33 @@ export const ReopenSubmissionSchema = z.object({
 export const AccountCreateSchema = z.object({
   name: z.string().min(2, 'Name is required'),
   email: z.string().email('Valid email address is required'),
-  role: z.enum(['public', 'evaluator', 'mentor', 'admin']),
+  role: z.enum(['public', 'evaluator', 'mentor', 'admin', 'desk']),
 });
 
 export const AccountRoleUpdateSchema = z.object({
-  role: z.enum(['public', 'evaluator', 'mentor', 'admin']),
+  role: z.enum(['public', 'evaluator', 'mentor', 'admin', 'desk']),
 });
 
 export const TeamMemberInputSchema = z.object({
   name: z.string().min(2, 'Member name is required'),
   email: z.string().email('Valid member email is required'),
+});
+
+export const TeamUpdateMemberItemSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1, 'Member name is required').trim(),
+  email: z.string().email('Valid member email is required').toLowerCase().trim(),
+  role: z.enum(['leader', 'member']).optional(),
+  college: z.string().optional(),
+});
+
+export const TeamUpdateSchema = z.object({
+  teamName: z.string().min(2, 'Team name must be at least 2 characters').trim(),
+  college: z.string().optional().default('Independent'),
+  leaderEmail: z.string().email('Valid leader email is required').toLowerCase().trim().optional(),
+  members: z.array(TeamUpdateMemberItemSchema).min(1, 'A team must have at least one member'),
+  mentorName: z.string().optional().nullable(),
+  mentorEmail: z.string().email().optional().nullable().or(z.literal('')),
 });
 
 export const ManualTeamCreateSchema = z.object({

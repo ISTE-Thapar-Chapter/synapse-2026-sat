@@ -28,6 +28,7 @@ function mockGoogleToken(email: string, name: string) {
 }
 
 let adminToken: string;
+let deskToken: string;
 let evaluatorToken: string;
 let leaderToken: string;
 let memberToken: string;
@@ -67,6 +68,11 @@ beforeAll(async () => {
     { name: 'Evaluator Tester', email: 'evaluator-test@iste.org', role: 'evaluator' },
     { upsert: true }
   );
+  await Account.findOneAndUpdate(
+    { email: 'desk-test@iste.org' },
+    { name: 'Desk Volunteer', email: 'desk-test@iste.org', role: 'desk' },
+    { upsert: true }
+  );
 
   testLeader = await Participant.findOneAndUpdate(
     { email: 'leader-test@univ.edu' },
@@ -95,6 +101,7 @@ beforeAll(async () => {
   await Participant.findByIdAndUpdate(testMember._id, { teamId: testTeam._id, role: 'member' });
 
   adminToken = signUserToken('admin-test@iste.org', 'Admin Tester');
+  deskToken = signUserToken('desk-test@iste.org', 'Desk Volunteer');
   evaluatorToken = signUserToken('evaluator-test@iste.org', 'Evaluator Tester');
   leaderToken = signUserToken('leader-test@univ.edu', 'Leader');
   memberToken = signUserToken('member-test@univ.edu', 'Member');
@@ -1005,5 +1012,132 @@ describe('10. Two-Queue Round Robin Company Selection with 2-Minute Burst Time',
     expect(myStatusRes.status).toBe(200);
     expect(myStatusRes.body.queue1.myAssignment.companyName).toBe('Custom NeuroTech');
     expect(myStatusRes.body.queue2.myAssignment.companyName).toBe('Custom GridEnergy');
+  });
+
+  describe('Staff Role "desk" & Team Edit Permissions', () => {
+    let createdDeskTeamId: string;
+
+    it('allows desk role to list teams and participants', async () => {
+      const teamsRes = await request(app)
+        .get('/api/admin/teams')
+        .set('Authorization', `Bearer ${deskToken}`);
+      expect(teamsRes.status).toBe(200);
+      expect(Array.isArray(teamsRes.body)).toBe(true);
+
+      const partsRes = await request(app)
+        .get('/api/admin/participants')
+        .set('Authorization', `Bearer ${deskToken}`);
+      expect(partsRes.status).toBe(200);
+      expect(Array.isArray(partsRes.body)).toBe(true);
+    });
+
+    it('allows desk role to manually create a team and automatically provisions accounts', async () => {
+      const res = await request(app)
+        .post('/api/admin/teams/manual')
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({
+          teamName: 'Desk Managed Innovators',
+          leaderName: 'Desk Alpha',
+          leaderEmail: 'deskalpha@iste.org',
+          college: 'Desk Institute of Tech',
+          members: [
+            { name: 'Desk Beta', email: 'deskbeta@iste.org' },
+            { name: 'Desk Gamma', email: 'deskgamma@iste.org' },
+          ],
+        });
+      expect(res.status).toBe(201);
+      expect(res.body.team).toBeDefined();
+      expect(res.body.team.teamName).toBe('Desk Managed Innovators');
+      expect(res.body.team.members.length).toBe(3);
+      createdDeskTeamId = res.body.team._id;
+
+      // Verify accounts were provisioned for all 3 members
+      const alphaAcc = await Account.findOne({ email: 'deskalpha@iste.org' });
+      expect(alphaAcc).toBeDefined();
+      expect(alphaAcc?.role).toBe('public');
+      const betaAcc = await Account.findOne({ email: 'deskbeta@iste.org' });
+      expect(betaAcc).toBeDefined();
+    });
+
+    it('allows desk and admin to edit team name, college, add/remove members, and swap leader', async () => {
+      // Modify team: change name, remove Desk Gamma, add Desk Delta, and make Desk Beta the new leader
+      const editRes = await request(app)
+        .put(`/api/admin/teams/${createdDeskTeamId}`)
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({
+          teamName: 'Desk Innovators Renamed',
+          college: 'Global Tech Academy',
+          leaderEmail: 'deskbeta@iste.org',
+          members: [
+            { name: 'Desk Alpha', email: 'deskalpha@iste.org' },
+            { name: 'Desk Beta', email: 'deskbeta@iste.org' },
+            { name: 'Desk Delta', email: 'deskdelta@iste.org' },
+          ],
+        });
+      expect(editRes.status).toBe(200);
+      expect(editRes.body.team.teamName).toBe('Desk Innovators Renamed');
+      expect(editRes.body.team.members.length).toBe(3);
+
+      // Verify the new leader is Desk Beta
+      const updatedTeam = await Team.findById(createdDeskTeamId).populate('leaderId members');
+      expect(updatedTeam?.teamName).toBe('Desk Innovators Renamed');
+      expect((updatedTeam?.leaderId as any)?.email).toBe('deskbeta@iste.org');
+
+      // Verify Desk Gamma was disassociated from the team
+      const gammaPart = await Participant.findOne({ email: 'deskgamma@iste.org' });
+      expect(gammaPart?.teamId).toBeNull();
+      expect(gammaPart?.role).toBe('member');
+
+      // Verify Desk Delta participant and account were created
+      const deltaPart = await Participant.findOne({ email: 'deskdelta@iste.org' });
+      expect(deltaPart).toBeDefined();
+      expect(deltaPart?.teamId?.toString()).toBe(createdDeskTeamId);
+      const deltaAcc = await Account.findOne({ email: 'deskdelta@iste.org' });
+      expect(deltaAcc).toBeDefined();
+
+      // Verify audit log recorded TEAM_UPDATED
+      const log = await AuditLog.findOne({
+        action: 'TEAM_UPDATED',
+        entityId: createdDeskTeamId,
+      });
+      expect(log).toBeDefined();
+      expect(log?.actorEmail).toBe('desk-test@iste.org');
+    });
+
+    it('strictly forbids desk role from deleting or disqualifying teams', async () => {
+      const deleteRes = await request(app)
+        .delete(`/api/admin/teams/${createdDeskTeamId}`)
+        .set('Authorization', `Bearer ${deskToken}`);
+      expect(deleteRes.status).toBe(403);
+
+      const disqRes = await request(app)
+        .patch(`/api/admin/teams/${createdDeskTeamId}/disqualify`)
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({ disqualified: true, reason: 'Test reason' });
+      expect(disqRes.status).toBe(403);
+    });
+
+    it('strictly forbids desk role from administrative endpoints (accounts, config, audit logs, stage transition)', async () => {
+      const accRes = await request(app)
+        .get('/api/admin/accounts')
+        .set('Authorization', `Bearer ${deskToken}`);
+      expect(accRes.status).toBe(403);
+
+      const postAccRes = await request(app)
+        .post('/api/admin/accounts')
+        .set('Authorization', `Bearer ${deskToken}`)
+        .send({ name: 'Hacker', email: 'hacker@iste.org', role: 'admin' });
+      expect(postAccRes.status).toBe(403);
+
+      const auditRes = await request(app)
+        .get('/api/admin/audit-logs')
+        .set('Authorization', `Bearer ${deskToken}`);
+      expect(auditRes.status).toBe(403);
+
+      const stageRes = await request(app)
+        .post('/api/admin/event/start')
+        .set('Authorization', `Bearer ${deskToken}`);
+      expect(stageRes.status).toBe(403);
+    });
   });
 });

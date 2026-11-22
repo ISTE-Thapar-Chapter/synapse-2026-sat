@@ -41,7 +41,7 @@ const AppContent: React.FC = () => {
   const isStaffPath =
     location.pathname.startsWith('/staff') ||
     (location.pathname === '/login' && location.search.includes('staff=true'));
-  const isStaffUser = user && (user.role === 'admin' || user.role === 'evaluator' || user.role === 'mentor');
+  const isStaffUser = user && (user.role === 'admin' || user.role === 'evaluator' || user.role === 'mentor' || user.role === 'desk');
 
   // Once winners are announced, every login and view for participants and general public is shown the 2 1 3 podium
   if (winnersState?.announced && !isStaffPath && !isStaffUser) {

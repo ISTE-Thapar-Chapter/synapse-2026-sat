@@ -494,11 +494,11 @@ export const StaffPortal: React.FC = () => {
     );
   }
 
-  if (!user || (user.role !== 'admin' && user.role !== 'evaluator' && user.role !== 'mentor')) {
+  if (!user || (user.role !== 'admin' && user.role !== 'evaluator' && user.role !== 'mentor' && user.role !== 'desk')) {
     return (
       <EmptyState
         title="Staff Access Required"
-        description="This area is restricted to staff (administrators, evaluators, and mentors). Please sign in with an authorized staff account."
+        description="This area is restricted to staff (administrators, evaluators, mentors, and registration desk). Please sign in with an authorized staff account."
         action={
           <Button onClick={() => navigate('/login?staff=true')} variant="primary" size="sm">
             Sign In to Staff Portal
@@ -1549,7 +1549,9 @@ export const StaffPortal: React.FC = () => {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <h1 className="text-2xl font-serif font-bold text-ink">Staff Workspace</h1>
-              <Badge variant={isAdmin ? 'signal' : 'saffron'}>{isAdmin ? 'Administrator' : 'Evaluator'}</Badge>
+              <Badge variant={isAdmin ? 'signal' : isMentor ? 'navy' : isDesk ? 'success' : 'saffron'}>
+                {isAdmin ? 'Administrator' : isMentor ? 'Mentor' : isDesk ? 'Registration Desk' : 'Evaluator'}
+              </Badge>
             </div>
             <p className="text-xs text-ink-muted">
               {user.name} ({user.email}) &bull; Status:{' '}

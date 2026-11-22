@@ -8,13 +8,15 @@ import { Link } from 'react-router-dom';
 
 export const LeaderboardPage: React.FC = () => {
   const [leaderboard, setLeaderboard] = useState<any>(null);
+  const [leaderboardVisible, setLeaderboardVisible] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     api
-      .get<{ published: boolean; leaderboard: any }>('/leaderboard/published')
+      .get<{ published: boolean; leaderboardVisible?: boolean; leaderboard: any }>('/leaderboard/published')
       .then((res) => {
         if (res.published) setLeaderboard(res.leaderboard);
+        setLeaderboardVisible(!!res.leaderboardVisible);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -25,12 +27,30 @@ export const LeaderboardPage: React.FC = () => {
         <Link to="/" className="inline-flex items-center gap-1.5 text-xs text-ink-muted hover:text-ink">
           <ArrowLeft className="w-3.5 h-3.5" /> Back to Event Overview
         </Link>
-        <Badge variant="saffron">Verified Leaderboard</Badge>
+        <Badge variant={leaderboardVisible ? 'signal' : 'saffron'}>
+          {leaderboardVisible ? 'Verified Leaderboard' : 'Standings Masked'}
+        </Badge>
       </div>
+
+      {!leaderboardVisible && (
+        <div className="p-4 bg-paper rounded-lg border border-mist text-xs text-ink-muted flex items-start gap-3">
+          <Award className="w-4 h-4 text-signal shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold text-ink block mb-0.5">Evaluations In Progress</span>
+            <p>
+              Your evaluation has been recorded by mentors and evaluators. Official scores and rankings are masked and will be unlocked once all reviews are completed.
+            </p>
+          </div>
+        </div>
+      )}
 
       <Card
         title="Official Competition Leaderboard"
-        subtitle="Live standings and verified scores published by competition evaluators"
+        subtitle={
+          leaderboardVisible
+            ? 'Live standings and verified scores published by competition evaluators'
+            : 'Participant rankings are currently masked by competition coordinators'
+        }
         action={
           leaderboard && (
             <div className="text-xs text-ink-muted flex items-center gap-1">
@@ -55,11 +75,19 @@ export const LeaderboardPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {leaderboard.entries.map((e: LeaderboardEntry) => (
-                  <tr key={e.teamId} className="hover:bg-paper/40 border-b border-mist">
-                    <td className="table-cell font-bold text-center">{e.rank}</td>
+                {leaderboard.entries.map((e: LeaderboardEntry, idx: number) => (
+                  <tr key={e.teamId || idx} className="hover:bg-paper/40 border-b border-mist">
+                    <td className="table-cell font-bold text-center">
+                      {leaderboardVisible ? e.rank : idx + 1}
+                    </td>
                     <td className="table-cell font-semibold">{e.teamName}</td>
-                    <td className="table-cell text-right font-mono font-bold text-signal">{e.score}</td>
+                    <td className="table-cell text-right font-mono font-bold">
+                      {leaderboardVisible ? (
+                        <span className="text-signal">{e.score}</span>
+                      ) : (
+                        <span className="text-ink-muted font-normal text-xs italic">Masked</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

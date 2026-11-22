@@ -1341,5 +1341,37 @@ describe('10. Two-Queue Round Robin Company Selection with 2-Minute Burst Time',
       expect(downloadRes.body.released).toBe(false);
       expect(downloadRes.body.url).toBeUndefined();
     });
+
+    it('hides evaluation scores and feedback from evaluated team and sets isEvaluated to true', async () => {
+      const currentRes = await request(app)
+        .get('/api/submissions/current')
+        .set('Authorization', `Bearer ${valLeaderToken}`);
+
+      expect(currentRes.status).toBe(200);
+      expect(currentRes.body.isEvaluated).toBe(true);
+      // Ensure score setted and feedback are completely scrubbed from participant response
+      const mentorEval = currentRes.body.requirementsSubmission?.payload?.mentorEvaluation;
+      expect(mentorEval).toBeDefined();
+      expect(mentorEval.totalMarks).toBe(0);
+      expect(mentorEval.overallAccuracyScore).toBe(0);
+      expect(mentorEval.overallConfidenceScore).toBe(0);
+      expect(mentorEval.feedback).toBe('');
+    });
+
+    it('loads the 40 Technology companies into Queue 1 and 40 Non-Technology companies into Queue 2 by default', async () => {
+      // Clear customized queues so RoundRobinService initializes the official default company pools
+      await RoundRobinQueue.deleteMany({});
+
+      const { RoundRobinService } = await import('../src/services/roundRobinService.js');
+      const q1 = await RoundRobinService.getQueue(1);
+      expect(q1.companies.length).toBe(40);
+      expect(q1.companies[0].name).toBe('Apple Inc.');
+      expect(q1.companies[39].name).toBe('Tata Consultancy Services (TCS)');
+
+      const q2 = await RoundRobinService.getQueue(2);
+      expect(q2.companies.length).toBe(40);
+      expect(q2.companies[0].name).toBe('Johnson & Johnson');
+      expect(q2.companies[39].name).toBe('Procter & Gamble');
+    });
   });
 });

@@ -3,14 +3,9 @@ import { Submission } from '../models/Submission.js';
 import { Team } from '../models/Team.js';
 import { CompanyAssignment, ICompanyAssignmentItem } from '../models/CompanyAssignment.js';
 import { logAudit } from './auditService.js';
+import { DEFAULT_COMPANY_NAMES } from '../config/defaultCompanies.js';
 
-export const DEFAULT_COMPANIES = [
-  'Saturnalia AI Solutions',
-  'Turing Data Systems',
-  'Nova Intelligence Lab',
-  'Apex Predictive Analytics',
-  'Chronos Deep Learning',
-];
+export const DEFAULT_COMPANIES = DEFAULT_COMPANY_NAMES;
 
 export class RankingService {
   /**

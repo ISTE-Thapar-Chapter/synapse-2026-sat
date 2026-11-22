@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.js';
 import { api } from '../services/api.js';
 import { Card } from '../components/UI/Card.js';
@@ -35,11 +36,13 @@ import {
 
 export const TeamPortal: React.FC = () => {
   const { user, participant, team, isLeader } = useAuth();
+  const navigate = useNavigate();
 
   // Navigation / Section State (persisted across page reloads)
   const [activeSection, setActiveSection] = useState<
     'cleaning' | 'requirements' | 'leaderboard' | 'companies' | 'final'
   >('cleaning');
+  const [isEvaluated, setIsEvaluated] = useState<boolean>(false);
 
   // Company selection subtabs: Queue 1 (Round Robin), Knowledge Assessment (Quiz), Live Auction floor, or Queue 2
   const [companySubTab, setCompanySubTab] = useState<'queue1' | 'quiz' | 'auction' | 'queue2'>('queue1');
@@ -170,7 +173,14 @@ export const TeamPortal: React.FC = () => {
         assignedCompanies?: Array<{ id: string; name: string; description: string; source: string }>;
         hasSelectedTwoCompanies?: boolean;
         finalSubmissionOpen?: boolean;
+        isEvaluated?: boolean;
       }>('/submissions/current');
+
+      if (data.isEvaluated) {
+        setIsEvaluated(true);
+        navigate('/leaderboard', { replace: true });
+        return;
+      }
 
       setIsEventStarted(!!data.isEventStarted);
       setCleaningDataset(data.cleaningDataset || null);
@@ -833,6 +843,10 @@ export const TeamPortal: React.FC = () => {
     );
   }
 
+  if (isEvaluated) {
+    return <Navigate to="/leaderboard" replace />;
+  }
+
   const isCleaningLocked = !!cleaningSubmission?.isLocked;
   const isReqLocked = !!requirementsSubmission?.isLocked;
   const canEditCleaning = isLeader && !isCleaningLocked && !team.disqualified && !participant?.restricted;
@@ -1361,74 +1375,13 @@ export const TeamPortal: React.FC = () => {
                   </div>
                 </div>
 
-                {/* 2. Mentor Evaluation Summary Banner if Graded */}
-                {(() => {
-                  const mentorEvaluation = requirementsSubmission?.payload?.mentorEvaluation;
-                  const hasMentorReview =
-                    mentorEvaluation &&
-                    ((mentorEvaluation.overallAccuracyScore ?? 0) > 0 ||
-                      (mentorEvaluation.overallConfidenceScore ?? 0) > 0 ||
-                      (mentorEvaluation.totalMarks ?? 0) > 0 ||
-                      mentorEvaluation.feedback);
-
-                  if (hasMentorReview) {
-                    return (
-                      <div className="p-5 bg-white rounded-xl border border-mist shadow-xs space-y-4">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-mist pb-3">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-xs font-bold text-signal uppercase tracking-wider">
-                                Mentor Evaluation Received
-                              </span>
-                              <Badge variant="signal">Graded</Badge>
-                            </div>
-                            <p className="text-xs text-ink-muted">
-                              Reviewed by {mentorEvaluation.mentorName}
-                              {mentorEvaluation.gradedAt && ` on ${new Date(mentorEvaluation.gradedAt).toLocaleDateString()}`}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-6 text-xs bg-paper px-4 py-2.5 rounded-md border border-mist shadow-xs">
-                            <div className="text-center">
-                              <span className="text-ink-muted block text-[10px] uppercase font-bold">Total Marks</span>
-                              <span className="font-mono text-lg font-bold text-signal">
-                                {mentorEvaluation.totalFeatureMarks ?? mentorEvaluation.totalMarks ?? 0} / 50
-                              </span>
-                            </div>
-                            <div className="text-center border-l border-mist pl-4">
-                              <span className="text-ink-muted block text-[10px] uppercase font-bold">Accuracy Rating</span>
-                              <span className="font-mono text-lg font-bold text-ink">
-                                {mentorEvaluation.overallAccuracyScore ?? 0}%
-                              </span>
-                            </div>
-                            <div className="text-center border-l border-mist pl-4">
-                              <span className="text-ink-muted block text-[10px] uppercase font-bold">Confidence Rating</span>
-                              <span className="font-mono text-lg font-bold text-ink">
-                                {mentorEvaluation.overallConfidenceScore ?? 0}%
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {mentorEvaluation.feedback && (
-                          <div className="p-3 bg-paper/60 rounded border border-mist text-xs">
-                            <span className="font-semibold text-ink block mb-0.5">Mentor Notes & Feedback:</span>
-                            <p className="text-ink-muted leading-relaxed italic">{mentorEvaluation.feedback}</p>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="p-4 bg-paper/40 rounded-lg border border-dashed border-mist text-center text-xs text-ink-muted space-y-1">
-                      <div className="font-semibold text-ink">Awaiting Mentor Review</div>
-                      <p>
-                        Once your mentor evaluates your validation results, your accuracy score, confidence rating, and feedback will appear here.
-                      </p>
-                    </div>
-                  );
-                })()}
+                {/* 2. Status message while awaiting evaluation */}
+                <div className="p-4 bg-paper/60 rounded-lg border border-dashed border-mist text-center text-xs text-ink-muted space-y-1">
+                  <div className="font-semibold text-ink">Submission Under Review</div>
+                  <p>
+                    Your cleaned dataset and models are being reviewed by mentors and evaluators. Once evaluated, check the competition leaderboard for standings.
+                  </p>
+                </div>
 
                 {/* 3. Reference to Cleaned Dataset */}
                 {cleaningSubmission?.payload?.cleanedDatasetUrl && (

@@ -248,6 +248,7 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
       mentorId: null,
       mentorName: req.user?.name || req.user?.email || 'Mentor',
       mentorEmail: req.user?.email || '',
+      gradedBy: req.user?.email || 'mentor',
       featureGrades: formattedGrades,
       totalFeatureMarks: totalMarks,
       totalMarks,

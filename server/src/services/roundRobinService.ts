@@ -9,76 +9,13 @@ import {
 import { Team } from '../models/Team.js';
 import { LeaderboardService } from './leaderboardService.js';
 import { logAudit } from './auditService.js';
+import {
+  TECHNOLOGY_COMPANIES,
+  NON_TECHNOLOGY_COMPANIES,
+} from '../config/defaultCompanies.js';
 
-export const DEFAULT_QUEUE_1_COMPANIES: Array<{ name: string; description: string }> = [
-  {
-    name: 'NeuralStream Analytics',
-    description: 'Real-time telemetry stream processing and distributed sensor anomaly detection.',
-  },
-  {
-    name: 'BioGenix Intelligence',
-    description: 'Deep learning sequence models for computational genomics and structural biology.',
-  },
-  {
-    name: 'AeroDynamics AI',
-    description: 'Autonomous aerial path planning, obstacle avoidance, and mission flight control.',
-  },
-  {
-    name: 'TerraClimate Systems',
-    description: 'High-resolution multi-spectral earth observation and extreme weather forecasting.',
-  },
-  {
-    name: 'CyberSentinel Labs',
-    description: 'Adversarial behavioral profiling and automated infrastructure incident mitigation.',
-  },
-  {
-    name: 'QuantumPulse Robotics',
-    description: 'Ultra-low latency edge reinforcement learning for precision industrial manipulation.',
-  },
-  {
-    name: 'VoxelVision Medical',
-    description: 'Volumetric CT/MRI 3D image reconstruction and oncological segmentation models.',
-  },
-  {
-    name: 'NexaRobotics Core',
-    description: 'Distributed swarm coordination and decentralized perception for warehouse automation.',
-  },
-];
-
-export const DEFAULT_QUEUE_2_COMPANIES: Array<{ name: string; description: string }> = [
-  {
-    name: 'FinTech HyperScale',
-    description: 'High-frequency transaction fraud detection and real-time banking risk evaluation.',
-  },
-  {
-    name: 'GridVolt Energy',
-    description: 'Smart renewable energy dispatch balancing and commercial battery storage control.',
-  },
-  {
-    name: 'OmniLogistics Core',
-    description: 'Dynamic multimodal fleet routing and global supply chain transit optimization.',
-  },
-  {
-    name: 'NeuroVision Healthcare',
-    description: 'Clinical decision support systems and diagnostic computer vision for pathology.',
-  },
-  {
-    name: 'Apex Autonomous',
-    description: 'Connected vehicular telemetry, LiDAR perception, and edge-embedded driver assist.',
-  },
-  {
-    name: 'DeepOcean Explorations',
-    description: 'Subsea robotic navigation, bathymetric mapping, and oceanic environmental sensing.',
-  },
-  {
-    name: 'AstroSynthetics Lab',
-    description: 'Orbital satellite communication scheduling and space debris orbital tracking.',
-  },
-  {
-    name: 'HelioPower Dynamics',
-    description: 'Solar grid irradiance forecasting and dynamic photovoltaic degradation modeling.',
-  },
-];
+export const DEFAULT_QUEUE_1_COMPANIES: Array<{ name: string; description: string }> = TECHNOLOGY_COMPANIES;
+export const DEFAULT_QUEUE_2_COMPANIES: Array<{ name: string; description: string }> = NON_TECHNOLOGY_COMPANIES;
 
 export class RoundRobinService {
   /**
@@ -111,6 +48,22 @@ export class RoundRobinService {
         teams: [],
         companies: initialCompanies,
       });
+    } else if (
+      queue.companies.length <= 8 &&
+      queue.companies.some((c) => c.name === 'NeuralStream Analytics' || c.name === 'FinTech HyperScale')
+    ) {
+      // Seamlessly upgrade from placeholder mock companies to official 40 default companies
+      const defaultCompanies = queueNumber === 1 ? DEFAULT_QUEUE_1_COMPANIES : DEFAULT_QUEUE_2_COMPANIES;
+      queue.companies = defaultCompanies.map((c, idx) => ({
+        id: `q${queueNumber}-c${idx + 1}`,
+        name: c.name,
+        description: c.description,
+        isAssigned: false,
+        assignedToTeamId: null,
+        assignedToTeamName: null,
+        assignedAt: null,
+      }));
+      await queue.save();
     }
 
     // Auto-advance if burst time expired while active

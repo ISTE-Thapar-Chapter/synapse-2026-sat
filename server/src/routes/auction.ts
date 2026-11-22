@@ -7,6 +7,7 @@ import { RoundRobinQueue } from '../models/RoundRobinQueue.js';
 import { CompanyAssignment } from '../models/CompanyAssignment.js';
 import { logAudit } from '../services/auditService.js';
 import { BatchQuizScoreSchema, AuctionBidSubmitSchema, BatchAuctionCompaniesSchema, AuctionReassignSchema } from '../schemas/validation.js';
+import { NON_TECHNOLOGY_COMPANIES } from '../config/defaultCompanies.js';
 
 const router = Router();
 
@@ -43,16 +44,16 @@ router.get('/companies', async (req: Request, res: Response, next: NextFunction)
     let config = await CompetitionConfig.findOne();
     if (!config) config = await CompetitionConfig.create({});
 
-    // Seed defaults if empty
-    if (!config.auctionCompanies || config.auctionCompanies.length === 0) {
-      config.auctionCompanies = [
-        { id: 'auc_1', name: 'DeepMind Robotics', description: 'Autonomous decision-making and spatial robotics foundation.', basePrice: 50, isAssigned: false },
-        { id: 'auc_2', name: 'OpenAI Infrastructure', description: 'Large-scale distributed systems and high-throughput model inference.', basePrice: 50, isAssigned: false },
-        { id: 'auc_3', name: 'Anthropic Safety Systems', description: 'Constitutional alignment and interpretability tooling partner.', basePrice: 50, isAssigned: false },
-        { id: 'auc_4', name: 'Databricks Lakehouse', description: 'Unified analytics and multi-cloud data orchestration platform.', basePrice: 50, isAssigned: false },
-        { id: 'auc_5', name: 'Stripe Global Financials', description: 'Mission-critical payment rails and real-time fraud mitigation.', basePrice: 50, isAssigned: false },
-        { id: 'auc_6', name: 'Snowflake Quantum Data', description: 'Autonomous data sharing, indexing, and elastic cloud computation.', basePrice: 50, isAssigned: false },
-      ];
+    // Seed defaults if empty or containing placeholder mock companies
+    const hasLegacyDefaults = config.auctionCompanies && config.auctionCompanies.some((c) => c.name === 'DeepMind Robotics' || c.name === 'OpenAI Infrastructure');
+    if (!config.auctionCompanies || config.auctionCompanies.length === 0 || hasLegacyDefaults) {
+      config.auctionCompanies = NON_TECHNOLOGY_COMPANIES.map((c, idx) => ({
+        id: `auc_${idx + 1}`,
+        name: c.name,
+        description: c.description,
+        basePrice: 50,
+        isAssigned: false,
+      }));
       await config.save();
     }
 

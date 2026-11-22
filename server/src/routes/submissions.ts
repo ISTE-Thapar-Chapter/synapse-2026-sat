@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth, requireTeamLeader, requireRole } from '../middleware/roles.js';
 import { StageService } from '../services/stageService.js';
 import { Submission, ISubmissionPayload } from '../models/Submission.js';
+import { Evaluation } from '../models/Evaluation.js';
 import { CompanyAssignment } from '../models/CompanyAssignment.js';
 import { CompetitionConfig } from '../models/CompetitionConfig.js';
 import { RoundRobinQueue } from '../models/RoundRobinQueue.js';
@@ -165,6 +166,53 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
 
     const hasSelectedTwoCompanies = assignedCompanies.length >= 2;
 
+    // Determine if team has been evaluated by mentor or evaluator
+    const evalDoc = await Evaluation.findOne({ targetTeamId: team._id, stage: 'requirements' });
+    const mentorEval = requirementsSubmission?.payload?.mentorEvaluation;
+    const hasMentorGraded = !!(
+      mentorEval &&
+      ((mentorEval.gradedBy && mentorEval.gradedBy !== 'system') ||
+        (mentorEval.mentorEmail && mentorEval.mentorEmail.length > 0) ||
+        (mentorEval.totalMarks !== undefined && mentorEval.totalMarks > 0) ||
+        (mentorEval.overallAccuracyScore !== undefined && mentorEval.overallAccuracyScore > 0))
+    );
+    const hasEvaluatorCompleted = !!(evalDoc && (evalDoc.status === 'completed' || evalDoc.score > 0));
+    const isEvaluated = hasMentorGraded || hasEvaluatorCompleted;
+
+    // Strict access control: If user is not staff, sanitize requirementsSubmission so score and feedback are never leaked
+    const isStaff = req.user && ['admin', 'evaluator', 'mentor', 'desk'].includes(req.user.role);
+    let sanitizedRequirementsSub = requirementsSubmission;
+    let sanitizedSub = !hasSubmittedCleaning
+      ? cleaningSubmission
+      : !hasSubmittedRequirements
+      ? requirementsSubmission
+      : finalSubmission || requirementsSubmission;
+
+    if (!isStaff && sanitizedRequirementsSub?.payload?.mentorEvaluation) {
+      const sanitizedPayload = {
+        ...sanitizedRequirementsSub.payload,
+        mentorEvaluation: {
+          gradedAt: sanitizedRequirementsSub.payload.mentorEvaluation.gradedAt || null,
+          gradedBy: 'staff',
+          // Mask scores and feedback
+          totalMarks: 0,
+          totalFeatureMarks: 0,
+          overallAccuracyScore: 0,
+          overallConfidenceScore: 0,
+          feedback: '',
+          featureGrades: [],
+        },
+      };
+      sanitizedRequirementsSub = {
+        ...(sanitizedRequirementsSub.toObject ? sanitizedRequirementsSub.toObject() : sanitizedRequirementsSub),
+        payload: sanitizedPayload,
+      } as any;
+
+      if (sanitizedSub?.stage === 'requirements') {
+        sanitizedSub = sanitizedRequirementsSub;
+      }
+    }
+
     return res.json({
       isEventStarted,
       activeStage,
@@ -178,15 +226,12 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       hasSubmittedCleaning,
       hasSubmittedRequirements,
       hasSubmittedFinal,
+      isEvaluated: !!isEvaluated,
       cleaningSubmission,
-      requirementsSubmission,
+      requirementsSubmission: sanitizedRequirementsSub,
       finalSubmission,
       requirements,
-      submission: !hasSubmittedCleaning
-        ? cleaningSubmission
-        : !hasSubmittedRequirements
-        ? requirementsSubmission
-        : finalSubmission || requirementsSubmission,
+      submission: sanitizedSub,
       assignedCompanies,
       assignedCompany: assignedCompanies[0] || null,
       hasSelectedTwoCompanies,

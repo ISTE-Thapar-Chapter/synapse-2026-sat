@@ -64,7 +64,7 @@ router.get('/published', async (req: Request, res: Response, next: NextFunction)
     const rawPublished = await LeaderboardService.getPublishedCleaningLeaderboard();
     const published = (rawPublished as any).toObject ? (rawPublished as any).toObject() : rawPublished;
     let config = await CompetitionConfig.findOne();
-    const isVisible = config?.leaderboardVisible ?? true;
+    const isVisible = config?.leaderboardVisible ?? false;
     const isStaff = req.user && ['admin', 'evaluator', 'mentor'].includes(req.user.role);
 
     if (!isVisible && !isStaff && published?.entries) {

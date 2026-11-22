@@ -47,13 +47,13 @@ export class LeaseService {
       const eligibleTeams = await Team.find({ disqualified: false }).select('_id');
       const eligibleIds = eligibleTeams.map((t) => t._id);
 
+      const stageCondition = stage === 'requirements' ? { $in: ['requirements', 'model-training', 'cleaning'] } : stage;
       const submissions = await Submission.find({
-        stage,
-        status: 'submitted',
+        stage: stageCondition as any,
         teamId: { $in: eligibleIds },
       }).select('teamId');
 
-      candidateTeamIds = submissions.map((s) => s.teamId);
+      candidateTeamIds = [...new Set(submissions.map((s) => s.teamId.toString()))].map((id) => new mongoose.Types.ObjectId(id));
     }
 
     if (candidateTeamIds.length === 0) {
@@ -65,14 +65,27 @@ export class LeaseService {
 
     for (const teamId of candidateTeamIds) {
       // Fetch corresponding submission
-      const sub = await Submission.findOne({ stage, teamId, status: 'submitted' });
-      if (!sub) continue;
+      const stageCondition = stage === 'requirements' ? { $in: ['requirements', 'model-training', 'cleaning'] } : stage;
+      let sub = await Submission.findOne({ stage: stageCondition as any, teamId });
+      if (!sub) {
+        sub = await Submission.create({
+          stage: 'requirements',
+          teamId,
+          status: 'submitted',
+          isLocked: true,
+          submittedAt: new Date(),
+          payload: {},
+        });
+      }
 
       // Atomically check & update or insert evaluation
       // Conditions:
       // A) No evaluation exists yet -> create with lease
       // B) Evaluation exists, status is in_progress, and lease is expired
-      const existing = await Evaluation.findOne({ stage, targetTeamId: teamId });
+      const existing = await Evaluation.findOne({
+        stage: { $in: [stage, 'requirements', 'model-training'] },
+        targetTeamId: teamId,
+      });
 
       if (!existing) {
         try {

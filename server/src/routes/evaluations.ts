@@ -9,7 +9,7 @@ import { logAudit } from '../services/auditService.js';
 import { EvaluationSubmitSchema, ScoreCorrectionSchema } from '../schemas/validation.js';
 
 const router = Router();
-router.use(requireAuth, requireRole(['evaluator', 'admin']));
+router.use(requireAuth, requireRole(['evaluator', 'mentor', 'admin']));
 
 /**
  * Get evaluation queue for the current stage
@@ -23,61 +23,80 @@ router.get('/queue', async (req: Request, res: Response, next: NextFunction) => 
     const evalStage = stageQuery === 'cleaning' ? 'cleaning' : 'requirements';
 
     // 1. Eligible teams
-    const eligibleTeams = await Team.find({ disqualified: false });
+    const eligibleTeams = await Team.find({ disqualified: false }).select('teamName college disqualified');
     const eligibleTeamIds = eligibleTeams.map((t) => t._id);
 
-    // 2. Submissions submitted
-    const stageCondition = evalStage === 'requirements' ? { $in: ['requirements', 'model-training'] } : evalStage;
-    const submissions = await Submission.find({
-      stage: stageCondition as any,
-      status: 'submitted',
-      teamId: { $in: eligibleTeamIds },
-    }).populate('teamId', 'teamName college disqualified');
+    // 2. Submissions submitted - fetch both cleaning and requirements/model-training submissions
+    const [cleaningSubs, reqSubs, evaluations] = await Promise.all([
+      Submission.find({ stage: 'cleaning', teamId: { $in: eligibleTeamIds } }),
+      Submission.find({ stage: { $in: ['requirements', 'model-training'] }, teamId: { $in: eligibleTeamIds } }),
+      Evaluation.find({ stage: { $in: [evalStage, 'requirements', 'model-training', 'cleaning'] }, targetTeamId: { $in: eligibleTeamIds } }),
+    ]);
 
-    // 3. Existing evaluations for this stage
-    const evaluations = await Evaluation.find({
-      stage: { $in: [evalStage, 'requirements', 'model-training'] },
-      targetTeamId: { $in: eligibleTeamIds },
-    });
-
-    const now = new Date();
+    const cleaningMap = new Map(cleaningSubs.map((s) => [s.teamId.toString(), s]));
+    const reqMap = new Map(reqSubs.map((s) => [s.teamId.toString(), s]));
     const evalMap = new Map(evaluations.map((e) => [e.targetTeamId.toString(), e]));
 
-    const targets = submissions.map((sub) => {
-      const teamIdStr = (sub.teamId as any)._id.toString();
-      const existingEval = evalMap.get(teamIdStr);
+    const now = new Date();
 
-      let leaseStatus: 'available' | 'leased_to_me' | 'locked_by_other' | 'completed' = 'available';
-      let leaseExpiresInSec = 0;
+    const targets = eligibleTeams
+      .filter((team) => {
+        const teamIdStr = team._id.toString();
+        const cSub = cleaningMap.get(teamIdStr);
+        const rSub = reqMap.get(teamIdStr);
+        // Include any team that submitted cleaning, submitted requirements, or has a mentor evaluation
+        return (cSub && cSub.status === 'submitted') || (rSub && rSub.status === 'submitted') || rSub?.payload?.mentorEvaluation;
+      })
+      .map((team) => {
+        const teamIdStr = team._id.toString();
+        const cSub = cleaningMap.get(teamIdStr);
+        const rSub = reqMap.get(teamIdStr);
+        const existingEval = evalMap.get(teamIdStr);
 
-      if (existingEval) {
-        if (existingEval.status === 'completed') {
-          leaseStatus = 'completed';
-        } else if (existingEval.leaseExpiresAt && existingEval.leaseExpiresAt > now) {
-          if (existingEval.evaluatorEmail === evaluatorEmail) {
-            leaseStatus = 'leased_to_me';
-            leaseExpiresInSec = Math.max(0, Math.floor((existingEval.leaseExpiresAt.getTime() - now.getTime()) / 1000));
-          } else {
-            leaseStatus = 'locked_by_other';
+        const mergedPayload = {
+          cleanedDatasetUrl: cSub?.payload?.cleanedDatasetUrl || rSub?.payload?.cleanedDatasetUrl || '',
+          cleaningNotes: cSub?.payload?.cleaningNotes || rSub?.payload?.cleaningNotes || '',
+          mentorEvaluation: rSub?.payload?.mentorEvaluation || cSub?.payload?.mentorEvaluation || null,
+          requirements: rSub?.payload?.requirements || [],
+          companyName: rSub?.payload?.companyName || '',
+          methodologySummary: rSub?.payload?.methodologySummary || '',
+          generalNotes: rSub?.payload?.generalNotes || '',
+        };
+
+        const submittedAt = rSub?.submittedAt || cSub?.submittedAt || null;
+        const submissionId = rSub?._id || cSub?._id || null;
+
+        let leaseStatus: 'available' | 'leased_to_me' | 'locked_by_other' | 'completed' = 'available';
+        let leaseExpiresInSec = 0;
+
+        if (existingEval) {
+          if (existingEval.status === 'completed') {
+            leaseStatus = 'completed';
+          } else if (existingEval.leaseExpiresAt && existingEval.leaseExpiresAt > now) {
+            if (existingEval.evaluatorEmail === evaluatorEmail) {
+              leaseStatus = 'leased_to_me';
+              leaseExpiresInSec = Math.max(0, Math.floor((existingEval.leaseExpiresAt.getTime() - now.getTime()) / 1000));
+            } else {
+              leaseStatus = 'locked_by_other';
+            }
           }
         }
-      }
 
-      return {
-        teamId: (sub.teamId as any)._id,
-        teamName: (sub.teamId as any).teamName,
-        college: (sub.teamId as any).college,
-        submissionId: sub._id,
-        submittedAt: sub.submittedAt,
-        payload: sub.payload,
-        evaluationId: existingEval?._id || null,
-        score: existingEval?.score ?? null,
-        feedback: existingEval?.feedback ?? null,
-        leaseStatus,
-        leaseExpiresInSec,
-        evaluatorEmail: existingEval?.evaluatorEmail || null,
-      };
-    });
+        return {
+          teamId: team._id.toString(),
+          teamName: team.teamName,
+          college: team.college,
+          submissionId,
+          submittedAt,
+          payload: mergedPayload,
+          evaluationId: existingEval?._id || null,
+          score: existingEval?.score ?? null,
+          feedback: existingEval?.feedback ?? null,
+          leaseStatus,
+          leaseExpiresInSec,
+          evaluatorEmail: existingEval?.evaluatorEmail || null,
+        };
+      });
 
     return res.json({
       activeStage: evalStage,
@@ -108,15 +127,41 @@ router.post('/lease/acquire', async (req: Request, res: Response, next: NextFunc
       return res.status(409).json({ error: result.message });
     }
 
-    const sub = await Submission.findOne({
-      stage: { $in: [evalStage, 'requirements', 'model-training'] },
-      teamId: result.evaluation!.targetTeamId,
-    });
+    const team = await Team.findById(result.evaluation!.targetTeamId).select('teamName college');
+    const [cleaningSub, reqSub] = await Promise.all([
+      Submission.findOne({ stage: 'cleaning', teamId: result.evaluation!.targetTeamId }),
+      Submission.findOne({ stage: { $in: ['requirements', 'model-training'] }, teamId: result.evaluation!.targetTeamId }),
+    ]);
+
+    const mergedPayload = {
+      cleanedDatasetUrl: cleaningSub?.payload?.cleanedDatasetUrl || reqSub?.payload?.cleanedDatasetUrl || '',
+      cleaningNotes: cleaningSub?.payload?.cleaningNotes || reqSub?.payload?.cleaningNotes || '',
+      mentorEvaluation: reqSub?.payload?.mentorEvaluation || cleaningSub?.payload?.mentorEvaluation || null,
+      requirements: reqSub?.payload?.requirements || [],
+      companyName: reqSub?.payload?.companyName || '',
+      methodologySummary: reqSub?.payload?.methodologySummary || '',
+      generalNotes: reqSub?.payload?.generalNotes || '',
+    };
+
+    const hydratedEvaluation = {
+      evaluationId: result.evaluation!._id,
+      _id: result.evaluation!._id,
+      stage: result.evaluation!.stage,
+      teamId: result.evaluation!.targetTeamId?._id?.toString() || result.evaluation!.targetTeamId?.toString(),
+      teamName: team?.teamName || (result.evaluation!.targetTeamId as any)?.teamName || 'Team',
+      college: team?.college || '',
+      status: result.evaluation!.status,
+      score: result.evaluation!.score,
+      feedback: result.evaluation!.feedback,
+      leaseExpiresAt: result.evaluation!.leaseExpiresAt,
+      evaluatorEmail: result.evaluation!.evaluatorEmail,
+      payload: mergedPayload,
+    };
 
     return res.json({
       message: 'Evaluator lease acquired successfully.',
-      evaluation: result.evaluation,
-      submission: sub,
+      evaluation: hydratedEvaluation,
+      submission: reqSub || cleaningSub,
     });
   } catch (err) {
     next(err);

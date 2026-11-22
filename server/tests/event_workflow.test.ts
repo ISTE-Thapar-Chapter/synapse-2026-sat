@@ -382,6 +382,23 @@ describe('Full Synapse 2026 Event Workflow', () => {
         feedback: 'Awarded official Round 1 score based on mentor marks (38/50).',
       });
     expect(submitEvalResB.status).toBe(200);
+
+    // 4. Verify mentor can also access evaluation queue and see scored teams
+    const mentorQueueRes = await request(app)
+      .get('/api/evaluations/queue')
+      .set('Authorization', `Bearer ${mentorToken}`);
+    expect(mentorQueueRes.status).toBe(200);
+    expect(mentorQueueRes.body.targets.length).toBeGreaterThan(0);
+
+    // 5. Verify mentor teams endpoint now reflects round1Score
+    const mentorTeamsRes = await request(app)
+      .get('/api/mentor/teams')
+      .set('Authorization', `Bearer ${mentorToken}`);
+    expect(mentorTeamsRes.status).toBe(200);
+    const mTeamA = mentorTeamsRes.body.teams.find((t: any) => t.teamId === teamA._id.toString());
+    expect(mTeamA).toBeDefined();
+    expect(mTeamA.round1Score).toBe(45);
+    expect(mTeamA.round1Status).toBe('completed');
   });
 
   it('5. Leaderboard Visibility: Hidden by default (score 0), revealed upon admin toggle', async () => {

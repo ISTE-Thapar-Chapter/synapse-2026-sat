@@ -179,6 +179,7 @@ export const StaffPortal: React.FC = () => {
   const [mentorAccuracy, setMentorAccuracy] = useState<number>(0);
   const [mentorConfidence, setMentorConfidence] = useState<number>(0);
   const [mentorMarks, setMentorMarks] = useState<number>(0);
+  const [mentorRound1Score, setMentorRound1Score] = useState<number | string>('');
   const [mentorFeedbackText, setMentorFeedbackText] = useState<string>('');
   const [mentorValidationReleased, setMentorValidationReleased] = useState<boolean>(false);
   const [togglingDatasetTeamId, setTogglingDatasetTeamId] = useState<string | null>(null);
@@ -514,7 +515,14 @@ export const StaffPortal: React.FC = () => {
     setNotice(null);
     try {
       const res = await api.post<any>('/evaluations/lease/acquire', { targetTeamId: teamId });
-      setActiveTarget(res.evaluation);
+      const targetInQueue = targets.find((t) => t.teamId === teamId);
+      setActiveTarget({
+        ...targetInQueue,
+        ...res.evaluation,
+        payload: res.evaluation?.payload || targetInQueue?.payload,
+        teamName: res.evaluation?.teamName || targetInQueue?.teamName,
+        evaluationId: res.evaluation?.evaluationId || res.evaluation?._id || targetInQueue?.evaluationId,
+      });
       await loadQueue();
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Unable to open team evaluation.' });
@@ -680,6 +688,7 @@ export const StaffPortal: React.FC = () => {
     setMentorAccuracy(existing ? (existing.overallAccuracyScore ?? 0) : 0);
     setMentorConfidence(existing ? (existing.overallConfidenceScore ?? 0) : 0);
     setMentorMarks(existing ? (existing.totalFeatureMarks ?? existing.totalMarks ?? 0) : 0);
+    setMentorRound1Score(teamItem.round1Score !== null && teamItem.round1Score !== undefined ? teamItem.round1Score : '');
     setMentorFeedbackText(existing?.feedback || '');
     setMentorValidationReleased(!!teamItem.validationDatasetReleased);
 
@@ -717,7 +726,7 @@ export const StaffPortal: React.FC = () => {
     setMentorSubmitting(true);
     setNotice(null);
     try {
-      const payload = {
+      const payload: any = {
         teamId: activeMentorTeam.teamId,
         marks: Number(mentorMarks || 0),
         accuracyScore: Number(mentorAccuracy || 0),
@@ -725,6 +734,10 @@ export const StaffPortal: React.FC = () => {
         feedback: mentorFeedbackText,
         releaseValidationDataset: mentorValidationReleased,
       };
+
+      if (mentorRound1Score !== '' && !isNaN(Number(mentorRound1Score))) {
+        payload.round1Score = Math.min(100, Math.max(0, Number(mentorRound1Score)));
+      }
 
       await api.post('/mentor/grade-features', payload);
       setNotice({ type: 'success', message: `Evaluation review submitted successfully for ${activeMentorTeam.teamName}!` });
@@ -1694,7 +1707,7 @@ export const StaffPortal: React.FC = () => {
               </button>
             )}
 
-            {(isAdmin || isEvaluator) && (
+            {(isAdmin || isEvaluator || isMentor) && (
               <button
                 onClick={() => setActiveTab('evaluations')}
                 className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors ${
@@ -1864,14 +1877,17 @@ export const StaffPortal: React.FC = () => {
                     <span className="text-xs font-bold text-signal uppercase tracking-wider">
                       Mentor Scoring (Default: 0 - Mentor Filled)
                     </span>
-                    <div className="flex items-center gap-4 text-xs font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-4 text-xs font-mono font-bold">
                       <span className="text-ink">Acc: {mentorAccuracy}%</span>
                       <span className="text-ink">Conf: {mentorConfidence}%</span>
                       <span className="text-signal">Marks: {mentorMarks} / 50</span>
+                      {mentorRound1Score !== '' && (
+                        <span className="text-emerald-700">R1 Score: {mentorRound1Score}/100</span>
+                      )}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                     <div>
                       <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
                         Accuracy Score (0 - 100%) *
@@ -1921,6 +1937,24 @@ export const StaffPortal: React.FC = () => {
                         className="input-field text-xs font-mono font-bold text-signal"
                       />
                       <span className="text-[10px] text-ink-muted">Total score allocated for this stage.</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                        Round 1 Final Score (0 - 100)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        placeholder="Optional (0-100)"
+                        value={mentorRound1Score}
+                        onChange={(e) =>
+                          setMentorRound1Score(e.target.value === '' ? '' : Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))
+                        }
+                        className="input-field text-xs font-mono font-bold text-emerald-700"
+                      />
+                      <span className="text-[10px] text-ink-muted">Leaderboard score (or via Workspace).</span>
                     </div>
                   </div>
 
@@ -1972,6 +2006,7 @@ export const StaffPortal: React.FC = () => {
                           <th className="table-header">Cleaned Dataset</th>
                           <th className="table-header">Validation Dataset</th>
                           <th className="table-header">Mentor Assessment</th>
+                          <th className="table-header">R1 Leaderboard Score</th>
                           <th className="table-header text-right">Actions</th>
                         </tr>
                       </thead>
@@ -2044,14 +2079,40 @@ export const StaffPortal: React.FC = () => {
                                   <Badge variant="mist">Pending Evaluation</Badge>
                                 )}
                               </td>
+                              <td className="table-cell">
+                                {teamItem.round1Score !== null && teamItem.round1Score !== undefined ? (
+                                  <div className="space-y-0.5">
+                                    <Badge variant="signal">{teamItem.round1Score} / 100</Badge>
+                                    {teamItem.round1Evaluator && (
+                                      <span className="text-[10px] text-ink-muted block truncate max-w-[120px]">
+                                        by {teamItem.round1Evaluator}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <Badge variant="mist">Pending</Badge>
+                                )}
+                              </td>
                               <td className="table-cell text-right">
-                                <Button
-                                  variant={hasReview ? 'secondary' : 'primary'}
-                                  size="sm"
-                                  onClick={() => selectTeamForMentorGrading(teamItem)}
-                                >
-                                  {hasReview ? 'Edit Review' : 'Grade & Review'}
-                                </Button>
+                                <div className="flex items-center justify-end gap-2">
+                                  <Button
+                                    variant={hasReview ? 'secondary' : 'primary'}
+                                    size="sm"
+                                    onClick={() => selectTeamForMentorGrading(teamItem)}
+                                  >
+                                    {hasReview ? 'Edit Review' : 'Grade & Review'}
+                                  </Button>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => {
+                                      setActiveTab('evaluations');
+                                      handleSelectTeamForEvaluation(teamItem.teamId);
+                                    }}
+                                  >
+                                    Score Workspace →
+                                  </Button>
+                                </div>
                               </td>
                             </tr>
                           );

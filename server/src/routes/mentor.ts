@@ -30,6 +30,11 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
       stage: 'cleaning',
     });
 
+    const evaluations = await Evaluation.find({
+      stage: { $in: ['requirements', 'model-training'] },
+      targetTeamId: { $in: teamIds },
+    });
+
     const subMap = new Map<string, any>();
     for (const sub of submissions) {
       subMap.set(sub.teamId.toString(), sub);
@@ -40,6 +45,11 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
       cleaningMap.set(cs.teamId.toString(), cs);
     }
 
+    const evalMap = new Map<string, any>();
+    for (const ev of evaluations) {
+      evalMap.set(ev.targetTeamId.toString(), ev);
+    }
+
     let config = await CompetitionConfig.findOne();
     if (!config) config = await CompetitionConfig.create({});
     const defaultFeatureTitles = config.requirementTitles || [];
@@ -48,6 +58,7 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
       const sub = subMap.get(team._id.toString());
       const payload: ISubmissionPayload = sub?.payload || {};
       const cs = cleaningMap.get(team._id.toString());
+      const ev = evalMap.get(team._id.toString());
 
       const hasSubmittedCleaning = cs?.status === 'submitted';
       const cleanedDatasetUrl = cs?.payload?.cleanedDatasetUrl || cs?.payload?.datasetUrl || null;
@@ -96,6 +107,9 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
         validationDatasetReleasedBy: team.validationDatasetReleasedBy || null,
         features: submittedFeatures,
         mentorEvaluation: payload.mentorEvaluation || null,
+        round1Score: ev?.score ?? null,
+        round1Status: ev?.status ?? 'pending',
+        round1Evaluator: ev?.evaluatorEmail ?? null,
       };
     });
 
@@ -191,13 +205,30 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
       stage: { $in: ['requirements', 'model-training'] },
     });
 
+    const cleaningSub = await Submission.findOne({
+      teamId: team._id,
+      stage: 'cleaning',
+    });
+
     if (!submission) {
       submission = new Submission({
         teamId: team._id,
         stage: 'requirements',
-        status: 'draft',
-        payload: {},
+        status: 'submitted',
+        isLocked: true,
+        submittedAt: new Date(),
+        payload: {
+          cleanedDatasetUrl: cleaningSub?.payload?.cleanedDatasetUrl || cleaningSub?.payload?.datasetUrl || '',
+          cleaningNotes: cleaningSub?.payload?.cleaningNotes || cleaningSub?.payload?.cleaningSummary || '',
+        },
       });
+    } else {
+      submission.status = 'submitted';
+      submission.isLocked = true;
+      submission.submittedAt = submission.submittedAt || new Date();
+      if (!submission.payload?.cleanedDatasetUrl && cleaningSub?.payload?.cleanedDatasetUrl) {
+        submission.payload.cleanedDatasetUrl = cleaningSub.payload.cleanedDatasetUrl;
+      }
     }
 
     // Default accuracy and confidence score are 0, which mentors will fill up
@@ -264,6 +295,56 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
     };
     await submission.save();
 
+    // If mentor also awards the official Round 1 Leaderboard score (0-100), record Evaluation atomically!
+    const round1Score = typeof parsed.round1Score === 'number'
+      ? parsed.round1Score
+      : typeof parsed.finalScore === 'number'
+      ? parsed.finalScore
+      : undefined;
+
+    let officialEvaluation: any = null;
+    if (round1Score !== undefined) {
+      let evaluation = await Evaluation.findOne({
+        stage: 'requirements',
+        targetTeamId: team._id,
+      });
+
+      if (!evaluation) {
+        evaluation = new Evaluation({
+          stage: 'requirements',
+          targetTeamId: team._id,
+          submissionId: submission._id,
+          evaluatorEmail: req.user!.email,
+          score: round1Score,
+          feedback: feedback || mentorEvaluation.feedback || 'Round 1 Final Score awarded by Mentor.',
+          status: 'completed',
+          completedAt: new Date(),
+        });
+      } else {
+        evaluation.score = round1Score;
+        evaluation.feedback = feedback || evaluation.feedback || 'Round 1 Final Score awarded by Mentor.';
+        evaluation.evaluatorEmail = req.user!.email;
+        evaluation.status = 'completed';
+        evaluation.completedAt = new Date();
+        evaluation.leaseExpiresAt = null;
+      }
+      await evaluation.save();
+      officialEvaluation = evaluation;
+
+      await logAudit(
+        req.user!.email,
+        'ROUND1_FINAL_SCORE_AWARDED',
+        'Evaluation',
+        evaluation._id.toString(),
+        {
+          teamId: team._id.toString(),
+          teamName: team.teamName,
+          score: round1Score,
+          awardedBy: req.user!.email,
+        }
+      );
+    }
+
     await logAudit(
       req.user!.email,
       'MENTOR_EVALUATION_SUBMITTED',
@@ -275,6 +356,7 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
         totalMarks,
         overallAccuracyScore,
         overallConfidenceScore,
+        round1Score,
       }
     );
 
@@ -282,6 +364,7 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
       message: 'Feature grading recorded successfully.',
       mentorEvaluation,
       evaluation: mentorEvaluation,
+      officialEvaluation,
     });
   } catch (err) {
     next(err);

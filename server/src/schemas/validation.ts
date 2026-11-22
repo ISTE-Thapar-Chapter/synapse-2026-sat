@@ -61,6 +61,8 @@ export const MentorEvaluationSubmitSchema = z.object({
   marks: z.number().min(0, 'Marks cannot be negative').max(50, 'Marks cannot exceed 50').optional(),
   accuracyScore: z.number().min(0, 'Accuracy score must be between 0 and 100').max(100, 'Accuracy score must be between 0 and 100').optional(),
   confidenceScore: z.number().min(0, 'Confidence score must be between 0 and 100').max(100, 'Confidence score must be between 0 and 100').optional(),
+  round1Score: z.number().min(0, 'Round 1 score must be between 0 and 100').max(100, 'Round 1 score must be between 0 and 100').optional(),
+  finalScore: z.number().min(0, 'Final score must be between 0 and 100').max(100, 'Final score must be between 0 and 100').optional(),
   feedback: z.string().optional().default(''),
   featureGrades: z.array(MentorFeatureGradeItemSchema).optional(),
   releaseValidationDataset: z.boolean().optional(),

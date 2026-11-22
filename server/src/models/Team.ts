@@ -7,6 +7,9 @@ export interface ITeam extends Document {
   disqualified: boolean;
   mentorName?: string | null;
   mentorEmail?: string | null;
+  validationDatasetReleased?: boolean;
+  validationDatasetReleasedAt?: Date | null;
+  validationDatasetReleasedBy?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -19,6 +22,9 @@ const TeamSchema = new Schema<ITeam>(
     disqualified: { type: Boolean, default: false, index: true },
     mentorName: { type: String, default: null, trim: true },
     mentorEmail: { type: String, default: null, lowercase: true, trim: true },
+    validationDatasetReleased: { type: Boolean, default: false, index: true },
+    validationDatasetReleasedAt: { type: Date, default: null },
+    validationDatasetReleasedBy: { type: String, default: null },
   },
   { timestamps: true }
 );

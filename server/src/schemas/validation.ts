@@ -34,13 +34,14 @@ export const FeatureCompanyItemSchema = z.object({
 });
 
 export const FeaturesSubmissionSchema = z.object({
-  features: z.array(FeatureCompanyItemSchema).min(1, 'Please enter company names for the features'),
+  features: z.array(FeatureCompanyItemSchema).optional().default([]),
+  notes: z.string().optional(),
 });
 
 export const MentorFeatureGradeItemSchema = z.object({
-  featureIndex: z.number().int().min(0).max(4),
+  featureIndex: z.number().int().min(0).max(4).optional().default(0),
   companyName: z.string().optional().default(''),
-  marks: z.number().min(0, 'Marks cannot be negative').max(10, 'Marks cannot exceed 10'),
+  marks: z.number().min(0, 'Marks cannot be negative').max(50, 'Marks cannot exceed 50').optional().default(0),
   accuracyScore: z.number().min(0, 'Accuracy rating must be between 0 and 100').max(100, 'Accuracy rating must be between 0 and 100').optional(),
   accuracyPercent: z.number().min(0, 'Accuracy rating must be between 0 and 100').max(100, 'Accuracy rating must be between 0 and 100').optional(),
   confidenceScore: z.number().min(0, 'Confidence rating must be between 0 and 100').max(100, 'Confidence rating must be between 0 and 100').optional(),
@@ -57,7 +58,12 @@ export const MentorFeatureGradeItemSchema = z.object({
 
 export const MentorEvaluationSubmitSchema = z.object({
   teamId: z.string().min(1, 'Team selection is required'),
-  featureGrades: z.array(MentorFeatureGradeItemSchema).min(1, 'At least one feature grade is required'),
+  marks: z.number().min(0, 'Marks cannot be negative').max(50, 'Marks cannot exceed 50').optional(),
+  accuracyScore: z.number().min(0, 'Accuracy score must be between 0 and 100').max(100, 'Accuracy score must be between 0 and 100').optional(),
+  confidenceScore: z.number().min(0, 'Confidence score must be between 0 and 100').max(100, 'Confidence score must be between 0 and 100').optional(),
+  feedback: z.string().optional().default(''),
+  featureGrades: z.array(MentorFeatureGradeItemSchema).optional(),
+  releaseValidationDataset: z.boolean().optional(),
 });
 
 export const FinalProjectSubmissionSchema = z.object({

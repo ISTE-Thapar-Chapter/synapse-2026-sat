@@ -106,6 +106,9 @@ export const StaffPortal: React.FC = () => {
   const [datasetTitle, setDatasetTitle] = useState('');
   const [datasetUrl, setDatasetUrl] = useState('');
   const [datasetDesc, setDatasetDesc] = useState('');
+  const [valDatasetTitle, setValDatasetTitle] = useState('');
+  const [valDatasetUrl, setValDatasetUrl] = useState('');
+  const [valDatasetDesc, setValDatasetDesc] = useState('');
   const [reqTitles, setReqTitles] = useState<string[]>(['', '', '', '', '']);
   const [featureDefs, setFeatureDefs] = useState<Array<{ featureIndex: number; title: string; expectedCompany: string }>>([
     { featureIndex: 0, title: '', expectedCompany: '' },
@@ -173,6 +176,12 @@ export const StaffPortal: React.FC = () => {
   const [mentorTeams, setMentorTeams] = useState<any[]>([]);
   const [mentorFinalSubmissions, setMentorFinalSubmissions] = useState<any[]>([]);
   const [activeMentorTeam, setActiveMentorTeam] = useState<any | null>(null);
+  const [mentorAccuracy, setMentorAccuracy] = useState<number>(0);
+  const [mentorConfidence, setMentorConfidence] = useState<number>(0);
+  const [mentorMarks, setMentorMarks] = useState<number>(0);
+  const [mentorFeedbackText, setMentorFeedbackText] = useState<string>('');
+  const [mentorValidationReleased, setMentorValidationReleased] = useState<boolean>(false);
+  const [togglingDatasetTeamId, setTogglingDatasetTeamId] = useState<string | null>(null);
   const [mentorGrades, setMentorGrades] = useState<Array<{
     featureIndex: number;
     title: string;
@@ -261,6 +270,9 @@ export const StaffPortal: React.FC = () => {
       setDatasetTitle(cfg.cleaningDatasetTitle || '');
       setDatasetUrl(cfg.cleaningDatasetUrl || '');
       setDatasetDesc(cfg.cleaningDatasetDescription || '');
+      setValDatasetTitle(cfg.validationDatasetTitle || '');
+      setValDatasetUrl(cfg.validationDatasetUrl || '');
+      setValDatasetDesc(cfg.validationDatasetDescription || '');
       setLeaderboardVisible(!!cfg.leaderboardVisible);
       setQuizMultiplier(cfg.quizMultiplier || 100);
       const reqs = [...(cfg.requirementTitles || [])];
@@ -566,6 +578,9 @@ export const StaffPortal: React.FC = () => {
         cleaningDatasetTitle: datasetTitle,
         cleaningDatasetUrl: datasetUrl,
         cleaningDatasetDescription: datasetDesc,
+        validationDatasetTitle: valDatasetTitle,
+        validationDatasetUrl: valDatasetUrl,
+        validationDatasetDescription: valDatasetDesc,
         requirementTitles: titles.length > 0 ? titles : reqTitles.filter((t) => t.trim().length > 0),
         featureDefinitions: featureDefs,
       });
@@ -637,19 +652,47 @@ export const StaffPortal: React.FC = () => {
     }
   };
 
+  // Mentor: Toggle Validation Dataset Access for a team
+  const handleToggleValidationDataset = async (teamId: string, released: boolean) => {
+    setTogglingDatasetTeamId(teamId);
+    setNotice(null);
+    try {
+      const res = await api.post<{ message: string; validationDatasetReleased: boolean }>(
+        `/mentor/teams/${teamId}/validation-dataset`,
+        { released }
+      );
+      setNotice({ type: 'success', message: res.message });
+      if (activeMentorTeam && activeMentorTeam.teamId === teamId) {
+        setMentorValidationReleased(res.validationDatasetReleased);
+      }
+      await loadMentorData();
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to update validation dataset access.' });
+    } finally {
+      setTogglingDatasetTeamId(null);
+    }
+  };
+
   const selectTeamForMentorGrading = (teamItem: any) => {
     setActiveMentorTeam(teamItem);
-    const existingMentorGrades = teamItem.mentorEvaluation?.featureGrades || [];
+    const existing = teamItem.mentorEvaluation;
+    // Default accuracy and confidence score should be 0, which mentors will fill up
+    setMentorAccuracy(existing ? (existing.overallAccuracyScore ?? 0) : 0);
+    setMentorConfidence(existing ? (existing.overallConfidenceScore ?? 0) : 0);
+    setMentorMarks(existing ? (existing.totalFeatureMarks ?? existing.totalMarks ?? 0) : 0);
+    setMentorFeedbackText(existing?.feedback || '');
+    setMentorValidationReleased(!!teamItem.validationDatasetReleased);
 
+    const existingMentorGrades = teamItem.mentorEvaluation?.featureGrades || [];
     const grades = (teamItem.features || []).map((f: any, idx: number) => {
       const matched = existingMentorGrades.find((g: any) => g.featureIndex === f.featureIndex || g.featureIndex === idx);
       return {
         featureIndex: f.featureIndex ?? idx,
         title: f.title || `Feature ${idx + 1}`,
         companyName: f.companyName || '',
-        marks: matched ? matched.marks : 8,
-        accuracyScore: matched ? matched.accuracyScore : 80,
-        confidenceScore: matched ? matched.confidenceScore : 85,
+        marks: matched ? matched.marks : 0,
+        accuracyScore: matched ? matched.accuracyScore : 0,
+        confidenceScore: matched ? matched.confidenceScore : 0,
         feedback: matched ? matched.feedback || '' : '',
       };
     });
@@ -676,18 +719,15 @@ export const StaffPortal: React.FC = () => {
     try {
       const payload = {
         teamId: activeMentorTeam.teamId,
-        featureGrades: mentorGrades.map((g) => ({
-          featureIndex: g.featureIndex,
-          companyName: g.companyName,
-          marks: Number(g.marks),
-          accuracyScore: Number(g.accuracyScore),
-          confidenceScore: Number(g.confidenceScore),
-          feedback: g.feedback,
-        })),
+        marks: Number(mentorMarks || 0),
+        accuracyScore: Number(mentorAccuracy || 0),
+        confidenceScore: Number(mentorConfidence || 0),
+        feedback: mentorFeedbackText,
+        releaseValidationDataset: mentorValidationReleased,
       };
 
       await api.post('/mentor/grade-features', payload);
-      setNotice({ type: 'success', message: `Feature review submitted successfully for ${activeMentorTeam.teamName}!` });
+      setNotice({ type: 'success', message: `Evaluation review submitted successfully for ${activeMentorTeam.teamName}!` });
       setActiveMentorTeam(null);
       await loadMentorData();
     } catch (err: any) {
@@ -1705,7 +1745,7 @@ export const StaffPortal: React.FC = () => {
           {activeMentorTeam ? (
             <Card
               title={`Mentor Review: ${activeMentorTeam.teamName}`}
-              subtitle="Evaluate the team's identified companies across the 5 feature sets (10 marks each, 50 marks max)"
+              subtitle="Review cleaned dataset submission, fill Accuracy & Confidence scores, and manage validation dataset access."
               action={
                 <Button variant="secondary" size="sm" onClick={() => setActiveMentorTeam(null)}>
                   Close Review Panel
@@ -1713,117 +1753,173 @@ export const StaffPortal: React.FC = () => {
               }
             >
               <div className="space-y-6">
-                {/* Scoring Header */}
-                <div className="p-4 bg-paper rounded-lg border border-mist flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <span className="text-xs text-ink-muted uppercase font-bold tracking-wider">Evaluation Metrics</span>
-                    <h3 className="text-lg font-bold text-ink mt-0.5">{activeMentorTeam.teamName}</h3>
+                {/* Cleaned Dataset Submission Card */}
+                <div className="p-4 bg-paper rounded-lg border border-mist space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-mist/60 pb-2">
+                    <span className="text-xs font-bold text-signal uppercase tracking-wider">
+                      Cleaned Dataset Submission
+                    </span>
+                    {activeMentorTeam.hasSubmittedCleaning ? (
+                      <Badge variant="signal">Cleaned Dataset Submitted</Badge>
+                    ) : (
+                      <Badge variant="mist">Pending Submission</Badge>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-6 text-xs">
-                    <div className="text-center">
-                      <span className="text-ink-muted block text-[11px] uppercase font-semibold">Total Marks</span>
-                      <span className="font-mono text-xl font-bold text-signal">
-                        {mentorGrades.reduce((sum, g) => sum + Number(g.marks || 0), 0)} / 50
-                      </span>
-                    </div>
-                    <div className="text-center">
-                      <span className="text-ink-muted block text-[11px] uppercase font-semibold">Avg Accuracy</span>
-                      <span className="font-mono text-xl font-bold text-ink">
-                        {Math.round(
-                          mentorGrades.reduce((sum, g) => sum + Number(g.accuracyScore || 0), 0) /
-                            (mentorGrades.length || 1)
+                  {activeMentorTeam.hasSubmittedCleaning ? (
+                    <div className="space-y-2 text-xs">
+                      <div className="flex items-center gap-3">
+                        <span className="text-ink-muted font-medium">Dataset Link:</span>
+                        {activeMentorTeam.cleanedDatasetUrl && isSafeUrl(activeMentorTeam.cleanedDatasetUrl) ? (
+                          <a
+                            href={activeMentorTeam.cleanedDatasetUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 font-bold text-signal hover:underline"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            Open / Download Submitted Dataset
+                          </a>
+                        ) : (
+                          <span className="text-ink-muted">No valid link provided</span>
                         )}
-                        %
-                      </span>
+                      </div>
+                      {activeMentorTeam.cleaningNotes && (
+                        <div>
+                          <span className="text-ink-muted font-medium block mb-1">Cleaning Approach & Notes:</span>
+                          <div className="p-3 bg-white rounded border border-mist text-ink leading-relaxed font-sans">
+                            {activeMentorTeam.cleaningNotes}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="text-center">
-                      <span className="text-ink-muted block text-[11px] uppercase font-semibold">Avg Confidence</span>
-                      <span className="font-mono text-xl font-bold text-ink">
-                        {Math.round(
-                          mentorGrades.reduce((sum, g) => sum + Number(g.confidenceScore || 0), 0) /
-                            (mentorGrades.length || 1)
-                        )}
-                        %
-                      </span>
-                    </div>
-                  </div>
+                  ) : (
+                    <p className="text-xs text-ink-muted italic">
+                      This team has not submitted their cleaned dataset yet.
+                    </p>
+                  )}
                 </div>
 
-                {/* 5 Feature Cards */}
-                <div className="space-y-4">
-                  {mentorGrades.map((gradeItem, idx) => (
-                    <div key={idx} className="p-4 rounded-lg border border-mist bg-white space-y-3 shadow-xs">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-mist/60 pb-2">
-                        <span className="text-xs font-bold text-signal uppercase tracking-wider">
-                          Feature {idx + 1}: {gradeItem.title}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-ink-muted">Identified Company:</span>
-                          <span className="text-xs font-bold text-ink bg-mist/60 px-2.5 py-1 rounded">
-                            {gradeItem.companyName || 'Not Provided'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
-                            Marks (0 - 10) *
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={10}
-                            value={gradeItem.marks}
-                            onChange={(e) => handleMentorGradeChange(idx, 'marks', Math.min(10, Math.max(0, parseInt(e.target.value, 10) || 0)))}
-                            className="input-field text-xs font-mono font-bold"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
-                            Accuracy Rating (0 - 100%) *
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={gradeItem.accuracyScore}
-                            onChange={(e) => handleMentorGradeChange(idx, 'accuracyScore', Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))}
-                            className="input-field text-xs font-mono"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
-                            Confidence Rating (0 - 100%) *
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={gradeItem.confidenceScore}
-                            onChange={(e) => handleMentorGradeChange(idx, 'confidenceScore', Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))}
-                            className="input-field text-xs font-mono"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
-                          Mentor Feedback & Recommendations (Optional)
-                        </label>
-                        <input
-                          type="text"
-                          value={gradeItem.feedback}
-                          onChange={(e) => handleMentorGradeChange(idx, 'feedback', e.target.value)}
-                          placeholder="Constructive feedback for this feature..."
-                          className="input-field text-xs"
-                        />
-                      </div>
+                {/* Validation Dataset Access Control */}
+                <div className="p-4 bg-paper rounded-lg border border-mist space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-ink uppercase tracking-wider block">
+                        Validation Dataset Access Control
+                      </span>
+                      <p className="text-xs text-ink-muted mt-0.5">
+                        The validation dataset download is disabled for teams by default. Enable access once the team's cleaned dataset meets standards.
+                      </p>
                     </div>
-                  ))}
+                    {mentorValidationReleased ? (
+                      <Badge variant="signal">
+                        <Unlock className="w-3 h-3 mr-1" />
+                        Access Enabled
+                      </Badge>
+                    ) : (
+                      <Badge variant="mist">
+                        <Lock className="w-3 h-3 mr-1" />
+                        Access Disabled (Locked)
+                      </Badge>
+                    )}
+                  </div>
+
+                  <label className="flex items-start gap-3 cursor-pointer p-3 bg-white rounded border border-mist hover:border-signal/40 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={mentorValidationReleased}
+                      onChange={(e) => setMentorValidationReleased(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-mist text-signal focus:ring-signal"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-ink">
+                        Release Validation Dataset to {activeMentorTeam.teamName}
+                      </span>
+                      <p className="text-[11px] text-ink-muted mt-0.5">
+                        When enabled, this team's "Download Validation Dataset" button unlocks, allowing them to download the validation dataset link.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Scoring Header & Inputs */}
+                <div className="p-4 bg-white rounded-lg border border-mist space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-mist/60 pb-2">
+                    <span className="text-xs font-bold text-signal uppercase tracking-wider">
+                      Mentor Scoring (Default: 0 - Mentor Filled)
+                    </span>
+                    <div className="flex items-center gap-4 text-xs font-mono font-bold">
+                      <span className="text-ink">Acc: {mentorAccuracy}%</span>
+                      <span className="text-ink">Conf: {mentorConfidence}%</span>
+                      <span className="text-signal">Marks: {mentorMarks} / 50</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                        Accuracy Score (0 - 100%) *
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={mentorAccuracy}
+                        onChange={(e) =>
+                          setMentorAccuracy(Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))
+                        }
+                        className="input-field text-xs font-mono font-bold"
+                      />
+                      <span className="text-[10px] text-ink-muted">Defaults to 0% until filled by mentor.</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                        Confidence Score (0 - 100%) *
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={mentorConfidence}
+                        onChange={(e) =>
+                          setMentorConfidence(Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))
+                        }
+                        className="input-field text-xs font-mono font-bold"
+                      />
+                      <span className="text-[10px] text-ink-muted">Defaults to 0% until filled by mentor.</span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                        Evaluation Marks (0 - 50) *
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={50}
+                        value={mentorMarks}
+                        onChange={(e) =>
+                          setMentorMarks(Math.min(50, Math.max(0, parseInt(e.target.value, 10) || 0)))
+                        }
+                        className="input-field text-xs font-mono font-bold text-signal"
+                      />
+                      <span className="text-[10px] text-ink-muted">Total score allocated for this stage.</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                      Mentor Feedback & Recommendations (Optional)
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={mentorFeedbackText}
+                      onChange={(e) => setMentorFeedbackText(e.target.value)}
+                      placeholder="Feedback on cleaning methodology, anomaly handling, or next steps..."
+                      className="input-field text-xs"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-end gap-3 pt-4 border-t border-mist">
@@ -1839,8 +1935,8 @@ export const StaffPortal: React.FC = () => {
           ) : (
             <div className="space-y-6">
               <Card
-                title="Stage 2: 5 Feature Sets Evaluation"
-                subtitle="Review identified companies submitted by each team and record mentor grading"
+                title="Mentor Review & Validation Dataset Management"
+                subtitle="Review cleaned dataset submissions, release validation datasets to eligible teams, and submit Accuracy & Confidence scores"
                 action={
                   <Button variant="secondary" size="sm" icon={<RotateCw className="w-3.5 h-3.5" />} onClick={loadMentorData}>
                     Refresh Teams
@@ -1857,40 +1953,79 @@ export const StaffPortal: React.FC = () => {
                       <thead>
                         <tr className="border-b border-mist">
                           <th className="table-header">Team Name</th>
-                          <th className="table-header">Stage Status</th>
-                          <th className="table-header">Companies Identified</th>
-                          <th className="table-header">Mentor Review</th>
-                          <th className="table-header text-right">Action</th>
+                          <th className="table-header">Cleaned Dataset</th>
+                          <th className="table-header">Validation Dataset</th>
+                          <th className="table-header">Mentor Assessment</th>
+                          <th className="table-header text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {mentorTeams.map((teamItem) => {
                           const hasReview = !!teamItem.mentorEvaluation;
-                          const totalMarks = teamItem.mentorEvaluation?.totalFeatureMarks ?? 0;
-                          const compCount = (teamItem.features || []).filter((f: any) => f.companyName && f.companyName.trim().length > 0).length;
+                          const totalMarks = teamItem.mentorEvaluation?.totalMarks ?? teamItem.mentorEvaluation?.totalFeatureMarks ?? 0;
+                          const accScore = teamItem.mentorEvaluation?.overallAccuracyScore ?? 0;
+                          const confScore = teamItem.mentorEvaluation?.overallConfidenceScore ?? 0;
+                          const isReleased = !!teamItem.validationDatasetReleased;
+                          const isToggling = togglingDatasetTeamId === teamItem.teamId;
 
                           return (
                             <tr key={teamItem.teamId} className="border-b border-mist hover:bg-paper/40 transition-colors">
                               <td className="table-cell font-bold text-ink">{teamItem.teamName}</td>
                               <td className="table-cell">
-                                {teamItem.submissionStatus === 'submitted' ? (
-                                  <Badge variant="signal">Submitted & Locked</Badge>
-                                ) : teamItem.submissionStatus === 'draft' ? (
-                                  <Badge variant="saffron">Draft In Progress</Badge>
+                                {teamItem.hasSubmittedCleaning ? (
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="signal">Submitted</Badge>
+                                    {teamItem.cleanedDatasetUrl && isSafeUrl(teamItem.cleanedDatasetUrl) && (
+                                      <a
+                                        href={teamItem.cleanedDatasetUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-signal hover:underline font-mono text-[11px] inline-flex items-center gap-1"
+                                      >
+                                        <ExternalLink className="w-3 h-3" />
+                                        View
+                                      </a>
+                                    )}
+                                  </div>
                                 ) : (
-                                  <Badge variant="mist">Not Started</Badge>
+                                  <Badge variant="mist">Not Submitted</Badge>
                                 )}
                               </td>
-                              <td className="table-cell font-mono font-medium">
-                                {compCount} / 5 Features
+                              <td className="table-cell">
+                                <div className="flex items-center gap-2">
+                                  {isReleased ? (
+                                    <Badge variant="signal">
+                                      <Unlock className="w-3 h-3 mr-1" />
+                                      Released
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="mist">
+                                      <Lock className="w-3 h-3 mr-1" />
+                                      Disabled
+                                    </Badge>
+                                  )}
+                                  <Button
+                                    variant={isReleased ? 'secondary' : 'primary'}
+                                    size="sm"
+                                    loading={isToggling}
+                                    onClick={() => handleToggleValidationDataset(teamItem.teamId, !isReleased)}
+                                  >
+                                    {isReleased ? 'Revoke Access' : 'Enable Access'}
+                                  </Button>
+                                </div>
                               </td>
                               <td className="table-cell">
                                 {hasReview ? (
-                                  <span className="font-bold text-signal font-mono">
-                                    {totalMarks}/50 Marks ({teamItem.mentorEvaluation.overallAccuracyScore}% Acc)
-                                  </span>
+                                  <div className="space-y-0.5">
+                                    <span className="font-bold text-signal font-mono">
+                                      {totalMarks}/50 Marks
+                                    </span>
+                                    <span className="text-[11px] text-ink-muted block font-mono">
+                                      Acc: {accScore}% | Conf: {confScore}%
+                                    </span>
+                                  </div>
                                 ) : (
-                                  <Badge variant="mist">Pending Review</Badge>
+                                  <Badge variant="mist">Pending Evaluation</Badge>
                                 )}
                               </td>
                               <td className="table-cell text-right">
@@ -1899,7 +2034,7 @@ export const StaffPortal: React.FC = () => {
                                   size="sm"
                                   onClick={() => selectTeamForMentorGrading(teamItem)}
                                 >
-                                  {hasReview ? 'Edit Grade' : 'Grade Features'}
+                                  {hasReview ? 'Edit Review' : 'Grade & Review'}
                                 </Button>
                               </td>
                             </tr>
@@ -3658,6 +3793,43 @@ export const StaffPortal: React.FC = () => {
                   value={datasetDesc}
                   onChange={(e) => setDatasetDesc(e.target.value)}
                   placeholder="Imputation guidance, noise thresholds, coordinate handling..."
+                  className="input-field text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 bg-paper rounded border border-mist space-y-4">
+              <h4 className="text-sm font-bold text-ink">Validation Dataset</h4>
+              <p className="text-xs text-ink-muted">
+                Configured centrally here. It is locked and disabled for every team by default; mentors explicitly release it to individual teams upon review of their cleaned dataset submission.
+              </p>
+              <div>
+                <label className="block text-xs font-semibold text-ink uppercase mb-1">Validation Dataset Title</label>
+                <input
+                  type="text"
+                  value={valDatasetTitle}
+                  onChange={(e) => setValDatasetTitle(e.target.value)}
+                  placeholder="e.g. Satellite Ground Truth Validation Set v1"
+                  className="input-field text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink uppercase mb-1">Validation Dataset Download Link (URL)</label>
+                <input
+                  type="url"
+                  value={valDatasetUrl}
+                  onChange={(e) => setValDatasetUrl(e.target.value)}
+                  placeholder="https://storage.googleapis.com/... or https://r2.dev/..."
+                  className="input-field text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink uppercase mb-1">Validation Dataset Brief & Evaluation Notes</label>
+                <textarea
+                  rows={2}
+                  value={valDatasetDesc}
+                  onChange={(e) => setValDatasetDesc(e.target.value)}
+                  placeholder="Holdout evaluation criteria, accuracy benchmarks, feature format requirements..."
                   className="input-field text-xs"
                 />
               </div>

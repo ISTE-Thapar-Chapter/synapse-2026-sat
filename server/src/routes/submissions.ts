@@ -80,6 +80,19 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       };
     }
 
+    // Validation Dataset: ONLY provided if team has submitted cleaning AND mentor has released it for this specific team
+    const isValidationDatasetReleased = !!team.validationDatasetReleased;
+    let validationDataset = null;
+    if (hasSubmittedCleaning && isValidationDatasetReleased) {
+      const vUrl = config.validationDatasetUrl || 'https://datasets.iste.org/synapse/validation/satellite-val-v1.parquet';
+      validationDataset = {
+        title: config.validationDatasetTitle || 'Satellite Sensor Validation Dataset',
+        fileUrl: vUrl,
+        url: vUrl,
+        description: config.validationDatasetDescription || 'Official validation dataset used for evaluating accuracy and confidence metrics.',
+      };
+    }
+
     // 5 Requirement titles: ONLY revealed after cleaned dataset is submitted
     let requirements: string[] = [];
     if (hasSubmittedCleaning) {
@@ -160,6 +173,8 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       isDisqualified: team.disqualified,
       isRestricted: !!req.participant?.restricted,
       cleaningDataset,
+      validationDataset,
+      isValidationDatasetReleased,
       hasSubmittedCleaning,
       hasSubmittedRequirements,
       hasSubmittedFinal,
@@ -176,6 +191,54 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
       assignedCompany: assignedCompanies[0] || null,
       hasSelectedTwoCompanies,
       finalSubmissionOpen: !!config.finalSubmissionOpen,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Download validation dataset (strictly returns link ONLY if mentor released it for this specific team)
+ */
+router.get('/validation-dataset', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const team = req.team;
+    if (!team) {
+      return res.status(403).json({ error: 'No team linked to your account.' });
+    }
+
+    const cleaningSubmission = await Submission.findOne({
+      stage: 'cleaning',
+      teamId: team._id,
+      status: 'submitted',
+    });
+
+    if (!cleaningSubmission) {
+      return res.status(403).json({
+        error: 'Prerequisite Required',
+        message: 'You must submit your cleaned dataset before accessing the validation dataset.',
+        released: false,
+      });
+    }
+
+    if (!team.validationDatasetReleased) {
+      return res.status(403).json({
+        error: 'Validation Dataset Locked',
+        message: 'The validation dataset has not been released for your team yet. Your mentor must review your cleaned dataset and release it specifically for your team.',
+        released: false,
+      });
+    }
+
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    const vUrl = config.validationDatasetUrl || 'https://datasets.iste.org/synapse/validation/satellite-val-v1.parquet';
+    return res.json({
+      released: true,
+      title: config.validationDatasetTitle || 'Satellite Sensor Validation Dataset',
+      fileUrl: vUrl,
+      url: vUrl,
+      description: config.validationDatasetDescription || 'Official validation dataset used for evaluating accuracy and confidence metrics.',
     });
   } catch (err) {
     next(err);
@@ -308,79 +371,20 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
         validatedPayload = RequirementsSubmissionSchema.parse(rawPayload);
       }
 
-      // Auto-calculate feature marks from company name answer key
-      const featureDefs = config.featureDefinitions || [];
-      const submittedFeatures = validatedPayload.features || [];
-      let totalMarks = 0;
-      let sumAccuracy = 0;
-      let sumConfidence = 0;
-
-      const autoFeatureGrades = submittedFeatures.map((f: any, idx: number) => {
-        const expected = featureDefs.find((d: any) => d.featureIndex === f.featureIndex)?.expectedCompany || '';
-        const userComp = (f.companyName || '').trim().toLowerCase();
-        const expComp = expected.trim().toLowerCase();
-
-        let marks = 0;
-        let accuracyScore = 0;
-        let confidenceScore = 0;
-        let feedback = '';
-
-        if (expComp && userComp) {
-          if (userComp === expComp) {
-            marks = 10;
-            accuracyScore = 100;
-            confidenceScore = 100;
-            feedback = 'Correct company identified.';
-          } else if (userComp.includes(expComp) || expComp.includes(userComp)) {
-            marks = 8;
-            accuracyScore = 80;
-            confidenceScore = 80;
-            feedback = 'Close company identification.';
-          } else {
-            marks = 0;
-            accuracyScore = 20;
-            confidenceScore = 20;
-            feedback = 'Company identification does not match answer key.';
-          }
-        } else {
-          marks = 7;
-          accuracyScore = 70;
-          confidenceScore = 70;
-          feedback = 'Pending mentor manual review.';
-        }
-
-        totalMarks += marks;
-        sumAccuracy += accuracyScore;
-        sumConfidence += confidenceScore;
-
-        return {
-          featureIndex: f.featureIndex,
-          title: f.title || `Feature Set #${idx + 1}`,
-          companyName: f.companyName,
-          marks,
-          accuracyScore,
-          confidenceScore,
-          feedback,
-        };
-      });
-
-      const count = autoFeatureGrades.length || 1;
-      const overallAccuracyScore = Math.round(sumAccuracy / count);
-      const overallConfidenceScore = Math.round(sumConfidence / count);
-
+      // Default accuracy and confidence score are 0, which mentors will fill up
       validatedPayload = {
         ...validatedPayload,
         mentorEvaluation: {
           mentorId: null,
-          mentorName: 'Automatic Key Check',
-          featureGrades: autoFeatureGrades,
-          totalFeatureMarks: totalMarks,
-          totalMarks,
-          overallAccuracyScore,
-          overallConfidenceScore,
-          feedback: 'Auto-calculated from answer key. Mentors can adjust scores before final evaluation.',
+          mentorName: 'Pending Mentor Review',
+          featureGrades: [],
+          totalFeatureMarks: 0,
+          totalMarks: 0,
+          overallAccuracyScore: 0,
+          overallConfidenceScore: 0,
+          feedback: 'Awaiting mentor review.',
           gradedAt: new Date(),
-          isAutoCalculated: true,
+          isAutoCalculated: false,
         },
       };
     } else if (stage === 'final-submission') {

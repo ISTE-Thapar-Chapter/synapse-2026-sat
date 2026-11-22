@@ -89,6 +89,12 @@ export const TeamPortal: React.FC = () => {
     fileUrl: string;
     description?: string;
   } | null>(null);
+  const [validationDataset, setValidationDataset] = useState<{
+    title: string;
+    fileUrl: string;
+    description?: string;
+  } | null>(null);
+  const [isValidationDatasetReleased, setIsValidationDatasetReleased] = useState<boolean>(false);
   const [hasSubmittedCleaning, setHasSubmittedCleaning] = useState<boolean>(false);
   const [hasSubmittedRequirements, setHasSubmittedRequirements] = useState<boolean>(false);
   const [cleaningSubmission, setCleaningSubmission] = useState<Submission | null>(null);
@@ -152,6 +158,8 @@ export const TeamPortal: React.FC = () => {
         team: any;
         isLeader: boolean;
         cleaningDataset: { title: string; fileUrl: string; description?: string } | null;
+        validationDataset?: { title: string; fileUrl: string; description?: string } | null;
+        isValidationDatasetReleased?: boolean;
         hasSubmittedCleaning: boolean;
         hasSubmittedRequirements: boolean;
         hasSubmittedFinal?: boolean;
@@ -166,6 +174,8 @@ export const TeamPortal: React.FC = () => {
 
       setIsEventStarted(!!data.isEventStarted);
       setCleaningDataset(data.cleaningDataset || null);
+      setValidationDataset(data.validationDataset || null);
+      setIsValidationDatasetReleased(!!data.isValidationDatasetReleased);
       setHasSubmittedCleaning(!!data.hasSubmittedCleaning);
       setHasSubmittedRequirements(!!data.hasSubmittedRequirements);
       setHasSubmittedFinal(!!data.hasSubmittedFinal);
@@ -1014,7 +1024,7 @@ export const TeamPortal: React.FC = () => {
                     : 'bg-mist text-ink-muted'
                 }`}
               >
-                {hasSubmittedRequirements ? (
+                {hasSubmittedRequirements || isValidationDatasetReleased ? (
                   <CheckCircle2 className="w-4 h-4" />
                 ) : !hasSubmittedCleaning ? (
                   <Lock className="w-3.5 h-3.5" />
@@ -1023,7 +1033,7 @@ export const TeamPortal: React.FC = () => {
                 )}
               </div>
               <div>
-                <div className="text-xs font-bold leading-tight">The 5 Requirements</div>
+                <div className="text-xs font-bold leading-tight">Validation Dataset</div>
                 <div
                   className={`text-[11px] ${
                     activeSection === 'requirements' ? 'text-gray-300' : 'text-ink-muted'
@@ -1031,16 +1041,16 @@ export const TeamPortal: React.FC = () => {
                 >
                   {!hasSubmittedCleaning
                     ? 'Locked until Step 1 submitted'
-                    : hasSubmittedRequirements
-                    ? 'Submitted & Locked'
-                    : 'Configured tracks'}
+                    : isValidationDatasetReleased
+                    ? 'Released by Mentor'
+                    : 'Pending Mentor Approval'}
                 </div>
               </div>
             </button>
 
             {/* Step 3 Pill */}
             <button
-              disabled={!hasSubmittedRequirements}
+              disabled={!hasSubmittedCleaning}
               onClick={() => handleSelectSection('leaderboard')}
               className={`flex-1 min-w-[180px] flex items-center gap-3 p-3 rounded-md text-left transition-all ${
                 !hasSubmittedRequirements
@@ -1292,164 +1302,156 @@ export const TeamPortal: React.FC = () => {
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 2: THE 5 FEATURE SETS */}
+          {/* SECTION 2: VALIDATION DATASET & EVALUATION */}
           {/* ========================================================= */}
           {activeSection === 'requirements' && (
             <div className="space-y-6">
               <Card
-                title="Stage 2: Feature Identification (5 Features)"
-                subtitle="Identify the corresponding target organization for each of the 5 specialized challenge tracks"
+                title="Stage 2: Validation Dataset & Evaluation"
+                subtitle="Download the official validation dataset once your mentor approves your cleaned dataset, and review evaluation feedback"
               >
-                {isReqLocked && (
-                  <div className="p-3 bg-mist-light rounded border border-mist mb-6 flex items-center justify-between text-xs">
-                    <span className="text-ink">
-                      Submitted on{' '}
-                      <strong>
-                        {requirementsSubmission?.submittedAt
-                          ? new Date(requirementsSubmission.submittedAt).toLocaleString()
-                          : 'Recorded'}
-                      </strong>{' '}
-                      &bull; <span className="text-emerald-700 font-semibold">Records are immutable</span>
-                    </span>
-                    <Badge variant="signal">Submitted & Locked</Badge>
-                  </div>
-                )}
+                {/* 1. Validation Dataset Download Card */}
+                <div className="p-5 bg-paper rounded-xl border border-mist shadow-xs mb-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[11px] font-bold text-signal uppercase tracking-wider">
+                          Official Validation Track
+                        </span>
+                        <Badge variant={isValidationDatasetReleased ? 'success' : 'mist'}>
+                          {isValidationDatasetReleased ? 'Released by Mentor' : 'Locked'}
+                        </Badge>
+                      </div>
+                      <h3 className="text-base font-bold text-ink">
+                        {validationDataset?.title || 'Sensor Validation Dataset'}
+                      </h3>
+                      <p className="text-xs text-ink-muted mt-1 max-w-xl leading-relaxed">
+                        {isValidationDatasetReleased
+                          ? (validationDataset?.description || 'Your mentor has released the validation dataset for your team. Download it below to verify model accuracy.')
+                          : 'Your mentor must review your cleaned dataset submission and release the validation dataset specifically for your team before you can download it.'}
+                      </p>
+                    </div>
 
-                {/* Mentor Evaluation Summary Banner if Graded */}
+                    <div>
+                      {isValidationDatasetReleased && validationDataset?.fileUrl ? (
+                        <a
+                          href={validationDataset.fileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block"
+                        >
+                          <Button
+                            variant="primary"
+                            icon={<Download className="w-4 h-4" />}
+                          >
+                            Download Validation Dataset
+                          </Button>
+                        </a>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          disabled
+                          title="Locked until mentor releases the dataset for your team"
+                          icon={<Lock className="w-4 h-4 text-ink-muted" />}
+                        >
+                          Download Validation Dataset
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Mentor Evaluation Summary Banner if Graded */}
                 {(() => {
                   const mentorEvaluation = requirementsSubmission?.payload?.mentorEvaluation;
-                  if (!mentorEvaluation) return null;
+                  const hasMentorReview =
+                    mentorEvaluation &&
+                    ((mentorEvaluation.overallAccuracyScore ?? 0) > 0 ||
+                      (mentorEvaluation.overallConfidenceScore ?? 0) > 0 ||
+                      (mentorEvaluation.totalMarks ?? 0) > 0 ||
+                      mentorEvaluation.feedback);
 
-                  return (
-                    <div className="p-4 bg-paper rounded-lg border border-mist flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs font-bold text-signal uppercase tracking-wider">
-                            Mentor Review Received
-                          </span>
-                          <Badge variant="signal">Graded</Badge>
-                        </div>
-                        <p className="text-xs text-ink-muted">
-                          Reviewed by {mentorEvaluation.mentorName} on {new Date(mentorEvaluation.gradedAt).toLocaleDateString()}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-6 text-xs bg-white px-4 py-2.5 rounded-md border border-mist shadow-xs">
-                        <div className="text-center">
-                          <span className="text-ink-muted block text-[10px] uppercase font-bold">Total Marks</span>
-                          <span className="font-mono text-lg font-bold text-signal">
-                            {mentorEvaluation.totalFeatureMarks} / 50
-                          </span>
-                        </div>
-                        <div className="text-center border-l border-mist pl-4">
-                          <span className="text-ink-muted block text-[10px] uppercase font-bold">Accuracy Rating</span>
-                          <span className="font-mono text-lg font-bold text-ink">
-                            {mentorEvaluation.overallAccuracyScore}%
-                          </span>
-                        </div>
-                        <div className="text-center border-l border-mist pl-4">
-                          <span className="text-ink-muted block text-[10px] uppercase font-bold">Confidence Rating</span>
-                          <span className="font-mono text-lg font-bold text-ink">
-                            {mentorEvaluation.overallConfidenceScore}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                <div className="space-y-4">
-                  {formRequirements.requirements.map((reqItem, idx) => {
-                    const mentorEvaluation = requirementsSubmission?.payload?.mentorEvaluation;
-                    const mentorGrade = mentorEvaluation?.featureGrades?.find(
-                      (g: any) => g.featureIndex === idx
-                    );
-
+                  if (hasMentorReview) {
                     return (
-                      <div key={idx} className="p-4 bg-paper/60 rounded-lg border border-mist space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="text-[11px] font-bold text-signal uppercase tracking-wider">
-                            Feature Track #{idx + 1}
-                          </div>
-                          {mentorGrade ? (
-                            <span className="font-mono text-xs font-bold text-signal">
-                              Score: {mentorGrade.marks} / 10 &bull; {mentorGrade.accuracyScore}% Accuracy
-                            </span>
-                          ) : reqItem.companyName.trim().length >= 2 ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 font-semibold">
-                              <CheckCircle2 className="w-3 h-3" /> Ready
-                            </span>
-                          ) : null}
-                        </div>
-
-                        <h4 className="text-sm font-serif font-bold text-ink">{reqItem.title}</h4>
-
-                        <div>
-                          <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
-                            Identified Company Name *
-                          </label>
-                          <input
-                            type="text"
-                            disabled={!canEditRequirements}
-                            value={reqItem.companyName}
-                            onChange={(e) => handleReqItemChange(idx, 'companyName', e.target.value)}
-                            placeholder="Enter the company name identified for this feature..."
-                            className="input-field text-xs font-medium"
-                          />
-                          <p className="text-[11px] text-ink-muted mt-1">
-                            Provide the target organization or partner company identified for this feature set.
-                          </p>
-                        </div>
-
-                        {/* Individual Mentor Grading for this Feature Set */}
-                        {mentorGrade && (
-                          <div className="p-3 bg-white rounded border border-mist space-y-1 text-xs mt-2">
-                            <div className="flex items-center gap-4 text-ink font-semibold">
-                              <span>Feature Marks: <strong className="text-signal font-mono">{mentorGrade.marks} / 10</strong></span>
-                              <span>Accuracy: <strong className="font-mono">{mentorGrade.accuracyScore}%</strong></span>
-                              <span>Confidence: <strong className="font-mono">{mentorGrade.confidenceScore}%</strong></span>
+                      <div className="p-5 bg-white rounded-xl border border-mist shadow-xs space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-mist pb-3">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-bold text-signal uppercase tracking-wider">
+                                Mentor Evaluation Received
+                              </span>
+                              <Badge variant="signal">Graded</Badge>
                             </div>
-                            {mentorGrade.feedback && (
-                              <p className="text-ink-muted text-[11px] italic pt-1 border-t border-mist/50 mt-1">
-                                Note: "{mentorGrade.feedback}"
-                              </p>
-                            )}
+                            <p className="text-xs text-ink-muted">
+                              Reviewed by {mentorEvaluation.mentorName}
+                              {mentorEvaluation.gradedAt && ` on ${new Date(mentorEvaluation.gradedAt).toLocaleDateString()}`}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-6 text-xs bg-paper px-4 py-2.5 rounded-md border border-mist shadow-xs">
+                            <div className="text-center">
+                              <span className="text-ink-muted block text-[10px] uppercase font-bold">Total Marks</span>
+                              <span className="font-mono text-lg font-bold text-signal">
+                                {mentorEvaluation.totalFeatureMarks ?? mentorEvaluation.totalMarks ?? 0} / 50
+                              </span>
+                            </div>
+                            <div className="text-center border-l border-mist pl-4">
+                              <span className="text-ink-muted block text-[10px] uppercase font-bold">Accuracy Rating</span>
+                              <span className="font-mono text-lg font-bold text-ink">
+                                {mentorEvaluation.overallAccuracyScore ?? 0}%
+                              </span>
+                            </div>
+                            <div className="text-center border-l border-mist pl-4">
+                              <span className="text-ink-muted block text-[10px] uppercase font-bold">Confidence Rating</span>
+                              <span className="font-mono text-lg font-bold text-ink">
+                                {mentorEvaluation.overallConfidenceScore ?? 0}%
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {mentorEvaluation.feedback && (
+                          <div className="p-3 bg-paper/60 rounded border border-mist text-xs">
+                            <span className="font-semibold text-ink block mb-0.5">Mentor Notes & Feedback:</span>
+                            <p className="text-ink-muted leading-relaxed italic">{mentorEvaluation.feedback}</p>
                           </div>
                         )}
                       </div>
                     );
-                  })}
+                  }
 
-                  {canEditRequirements && (
-                    <div className="pt-4 border-t border-mist flex items-center justify-end gap-3">
-                      <Button
-                        variant="secondary"
-                        loading={saving}
-                        icon={<Save className="w-4 h-4" />}
-                        onClick={handleSaveRequirementsDraft}
-                      >
-                        Save Draft
-                      </Button>
-                      <Button
-                        variant="primary"
-                        loading={submitting}
-                        icon={<Send className="w-4 h-4" />}
-                        onClick={() => {
-                          setReqSubmitError(null);
-                          setConfirmReqModal(true);
-                        }}
-                      >
-                        Submit All 5 Features
-                      </Button>
+                  return (
+                    <div className="p-4 bg-paper/40 rounded-lg border border-dashed border-mist text-center text-xs text-ink-muted space-y-1">
+                      <div className="font-semibold text-ink">Awaiting Mentor Review</div>
+                      <p>
+                        Once your mentor evaluates your validation results, your accuracy score, confidence rating, and feedback will appear here.
+                      </p>
                     </div>
-                  )}
+                  );
+                })()}
 
-                  {!isLeader && !isReqLocked && (
-                    <p className="text-xs text-ink-muted italic text-right">
-                      Only the team leader can save drafts and finalize the submission.
-                    </p>
-                  )}
-                </div>
+                {/* 3. Reference to Cleaned Dataset */}
+                {cleaningSubmission?.payload?.cleanedDatasetUrl && (
+                  <div className="pt-4 border-t border-mist flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-ink-muted mt-4">
+                    <span>
+                      Cleaned Dataset Submitted:{' '}
+                      <strong className="text-ink">
+                        {cleaningSubmission.submittedAt
+                          ? new Date(cleaningSubmission.submittedAt).toLocaleString()
+                          : 'Recorded'}
+                      </strong>
+                    </span>
+                    <a
+                      href={cleaningSubmission.payload.cleanedDatasetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-signal underline inline-flex items-center gap-1 font-medium"
+                    >
+                      <span>View Cleaned Dataset Link</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
               </Card>
             </div>
           )}

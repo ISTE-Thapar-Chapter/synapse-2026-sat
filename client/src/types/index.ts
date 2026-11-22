@@ -34,6 +34,9 @@ export interface Team {
   disqualified: boolean;
   mentorName?: string | null;
   mentorEmail?: string | null;
+  validationDatasetReleased?: boolean;
+  validationDatasetReleasedAt?: string | null;
+  validationDatasetReleasedBy?: string | null;
 }
 
 export interface Submission {
@@ -172,6 +175,9 @@ export interface CompetitionConfig {
   cleaningDatasetTitle: string;
   cleaningDatasetUrl: string;
   cleaningDatasetDescription: string;
+  validationDatasetTitle?: string;
+  validationDatasetUrl?: string;
+  validationDatasetDescription?: string;
   requirementTitles: string[];
   featureDefinitions?: FeatureDefinition[];
   leaderboardVisible?: boolean;

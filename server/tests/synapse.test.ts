@@ -30,6 +30,7 @@ function mockGoogleToken(email: string, name: string) {
 let adminToken: string;
 let deskToken: string;
 let evaluatorToken: string;
+let mentorToken: string;
 let leaderToken: string;
 let memberToken: string;
 let unknownToken: string;
@@ -73,6 +74,11 @@ beforeAll(async () => {
     { name: 'Desk Volunteer', email: 'desk-test@iste.org', role: 'desk' },
     { upsert: true }
   );
+  await Account.findOneAndUpdate(
+    { email: 'mentor-test@iste.org' },
+    { name: 'Mentor Tester', email: 'mentor-test@iste.org', role: 'mentor' },
+    { upsert: true }
+  );
 
   testLeader = await Participant.findOneAndUpdate(
     { email: 'leader-test@univ.edu' },
@@ -102,6 +108,7 @@ beforeAll(async () => {
 
   adminToken = signUserToken('admin-test@iste.org', 'Admin Tester');
   deskToken = signUserToken('desk-test@iste.org', 'Desk Volunteer');
+  mentorToken = signUserToken('mentor-test@iste.org', 'Mentor Tester');
   evaluatorToken = signUserToken('evaluator-test@iste.org', 'Evaluator Tester');
   leaderToken = signUserToken('leader-test@univ.edu', 'Leader');
   memberToken = signUserToken('member-test@univ.edu', 'Member');
@@ -1138,6 +1145,201 @@ describe('10. Two-Queue Round Robin Company Selection with 2-Minute Burst Time',
         .post('/api/admin/event/start')
         .set('Authorization', `Bearer ${deskToken}`);
       expect(stageRes.status).toBe(403);
+    });
+  });
+
+  describe('12. Validation Dataset Gating, Mentor Release & Default 0 Scoring', () => {
+    let valTeam: any;
+    let valLeaderToken: string;
+
+    beforeAll(async () => {
+      await Team.deleteMany({ teamName: 'Validation Pioneers' });
+      await Participant.deleteMany({ email: 'val.lead@iste.org' });
+      await Account.deleteMany({ email: 'val.lead@iste.org' });
+
+      await Account.create({
+        name: 'Validation Leader',
+        email: 'val.lead@iste.org',
+        role: 'public',
+      });
+
+      const leaderPart = await Participant.create({
+        firstName: 'Val',
+        lastName: 'Leader',
+        email: 'val.lead@iste.org',
+        college: 'Data University',
+        role: 'leader',
+        restricted: false,
+      });
+
+      valTeam = await Team.create({
+        teamName: 'Validation Pioneers',
+        leaderId: leaderPart._id,
+        members: [leaderPart._id],
+        disqualified: false,
+        validationDatasetReleased: false,
+      });
+
+      leaderPart.teamId = valTeam._id;
+      await leaderPart.save();
+
+      valLeaderToken = signUserToken('val.lead@iste.org', 'Validation Leader');
+
+      // Admin configures validation dataset
+      await request(app)
+        .patch('/api/admin/config')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          validationDatasetTitle: 'Validation Ground Truth Set v1',
+          validationDatasetUrl: 'https://datasets.iste.org/validation-gt-v1.csv',
+          validationDatasetDescription: 'Strict holdout test split for evaluating models.',
+        });
+    });
+
+    it('blocks validation dataset access before cleaned dataset submission', async () => {
+      const res = await request(app)
+        .get('/api/submissions/validation-dataset')
+        .set('Authorization', `Bearer ${valLeaderToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.message || res.body.error).toMatch(/submit your cleaned dataset/i);
+    });
+
+    it('keeps validation dataset strictly locked and hidden after cleaned dataset submission until mentor releases it', async () => {
+      // 1. Submit cleaned dataset
+      const cleanRes = await request(app)
+        .post('/api/submissions/submit')
+        .set('Authorization', `Bearer ${valLeaderToken}`)
+        .send({
+          stage: 'cleaning',
+          cleanedDatasetUrl: 'https://datasets.iste.org/val-cleaned.csv',
+          psbUrl: 'https://datasets.iste.org/val-arch.psb',
+          cleaningNotes: 'KNN imputation and robust scaling performed.',
+        });
+
+      expect(cleanRes.status).toBe(200);
+
+      // 2. Query /current endpoint: validationDataset must be null and isValidationDatasetReleased must be false
+      const currentRes = await request(app)
+        .get('/api/submissions/current')
+        .set('Authorization', `Bearer ${valLeaderToken}`);
+
+      expect(currentRes.status).toBe(200);
+      expect(currentRes.body.hasSubmittedCleaning).toBe(true);
+      expect(currentRes.body.isValidationDatasetReleased).toBe(false);
+      expect(currentRes.body.validationDataset).toBeNull();
+
+      // 3. Directly hit the download endpoint: must return 403 Forbidden with released: false
+      const downloadRes = await request(app)
+        .get('/api/submissions/validation-dataset')
+        .set('Authorization', `Bearer ${valLeaderToken}`);
+
+      expect(downloadRes.status).toBe(403);
+      expect(downloadRes.body.released).toBe(false);
+      expect(downloadRes.body.url).toBeUndefined();
+    });
+
+    it('allows mentor to inspect teams and release validation dataset for the specific team', async () => {
+      // 1. Mentor views teams
+      const mentorTeamsRes = await request(app)
+        .get('/api/mentor/teams')
+        .set('Authorization', `Bearer ${mentorToken}`);
+
+      expect(mentorTeamsRes.status).toBe(200);
+      const teamItem = mentorTeamsRes.body.teams.find((t: any) => t.teamName === 'Validation Pioneers');
+      expect(teamItem).toBeDefined();
+      expect(teamItem.hasSubmittedCleaning).toBe(true);
+      expect(teamItem.cleanedDatasetUrl).toBe('https://datasets.iste.org/val-cleaned.csv');
+      expect(teamItem.validationDatasetReleased).toBe(false);
+
+      // 2. Mentor releases validation dataset for Validation Pioneers
+      const releaseRes = await request(app)
+        .post(`/api/mentor/teams/${valTeam._id}/validation-dataset`)
+        .set('Authorization', `Bearer ${mentorToken}`)
+        .send({ released: true });
+
+      expect(releaseRes.status).toBe(200);
+      expect(releaseRes.body.validationDatasetReleased).toBe(true);
+
+      // 3. Verify audit log entry
+      const auditEntry = await AuditLog.findOne({
+        action: 'VALIDATION_DATASET_RELEASED',
+        entityId: valTeam._id.toString(),
+      });
+      expect(auditEntry).toBeDefined();
+      expect(auditEntry?.actorEmail).toBe('mentor-test@iste.org');
+    });
+
+    it('enables team to download validation dataset once mentor has released it', async () => {
+      // 1. Current endpoint reflects released status and returns dataset info
+      const currentRes = await request(app)
+        .get('/api/submissions/current')
+        .set('Authorization', `Bearer ${valLeaderToken}`);
+
+      expect(currentRes.status).toBe(200);
+      expect(currentRes.body.isValidationDatasetReleased).toBe(true);
+      expect(currentRes.body.validationDataset).toBeDefined();
+      expect(currentRes.body.validationDataset.url).toBe('https://datasets.iste.org/validation-gt-v1.csv');
+
+      // 2. Download endpoint returns HTTP 200 with dataset url
+      const downloadRes = await request(app)
+        .get('/api/submissions/validation-dataset')
+        .set('Authorization', `Bearer ${valLeaderToken}`);
+
+      expect(downloadRes.status).toBe(200);
+      expect(downloadRes.body.released).toBe(true);
+      expect(downloadRes.body.url).toBe('https://datasets.iste.org/validation-gt-v1.csv');
+      expect(downloadRes.body.title).toBe('Validation Ground Truth Set v1');
+    });
+
+    it('records mentor evaluation with accuracy and confidence scores, saving evaluation for evaluators and leaderboard', async () => {
+      // Mentor records grades
+      const gradeRes = await request(app)
+        .post('/api/mentor/grade-features')
+        .set('Authorization', `Bearer ${mentorToken}`)
+        .send({
+          teamId: valTeam._id.toString(),
+          marks: 44,
+          accuracyScore: 88,
+          confidenceScore: 92,
+          feedback: 'Impressive preprocessing and robust outlier handling.',
+          releaseValidationDataset: true,
+        });
+
+      expect(gradeRes.status).toBe(200);
+      expect(gradeRes.body.evaluation.overallAccuracyScore).toBe(88);
+      expect(gradeRes.body.evaluation.overallConfidenceScore).toBe(92);
+      expect(gradeRes.body.evaluation.totalMarks).toBe(44);
+
+      // Verify Submission payload was saved with mentorEvaluation
+      const sub = await Submission.findOne({
+        teamId: valTeam._id,
+        stage: 'requirements',
+      });
+      expect(sub).toBeDefined();
+      expect(sub?.payload?.mentorEvaluation?.totalMarks).toBe(44);
+      expect(sub?.payload?.mentorEvaluation?.overallAccuracyScore).toBe(88);
+      expect(sub?.payload?.mentorEvaluation?.overallConfidenceScore).toBe(92);
+    });
+
+    it('allows mentor to revoke validation dataset access, locking the download endpoint again', async () => {
+      // Mentor revokes access
+      const revokeRes = await request(app)
+        .post(`/api/mentor/teams/${valTeam._id}/validation-dataset`)
+        .set('Authorization', `Bearer ${mentorToken}`)
+        .send({ released: false });
+
+      expect(revokeRes.status).toBe(200);
+      expect(revokeRes.body.validationDatasetReleased).toBe(false);
+
+      // Team download endpoint must now return 403 Forbidden
+      const downloadRes = await request(app)
+        .get('/api/submissions/validation-dataset')
+        .set('Authorization', `Bearer ${valLeaderToken}`);
+
+      expect(downloadRes.status).toBe(403);
+      expect(downloadRes.body.released).toBe(false);
+      expect(downloadRes.body.url).toBeUndefined();
     });
   });
 });

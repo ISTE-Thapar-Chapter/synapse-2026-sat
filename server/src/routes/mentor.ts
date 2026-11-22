@@ -25,9 +25,19 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
       stage: { $in: ['requirements', 'model-training'] },
     });
 
+    const cleaningSubmissions = await Submission.find({
+      teamId: { $in: teamIds },
+      stage: 'cleaning',
+    });
+
     const subMap = new Map<string, any>();
     for (const sub of submissions) {
       subMap.set(sub.teamId.toString(), sub);
+    }
+
+    const cleaningMap = new Map<string, any>();
+    for (const cs of cleaningSubmissions) {
+      cleaningMap.set(cs.teamId.toString(), cs);
     }
 
     let config = await CompetitionConfig.findOne();
@@ -37,6 +47,11 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
     const teamsData = teams.map((team) => {
       const sub = subMap.get(team._id.toString());
       const payload: ISubmissionPayload = sub?.payload || {};
+      const cs = cleaningMap.get(team._id.toString());
+
+      const hasSubmittedCleaning = cs?.status === 'submitted';
+      const cleanedDatasetUrl = cs?.payload?.cleanedDatasetUrl || cs?.payload?.datasetUrl || null;
+      const cleaningNotes = cs?.payload?.cleaningNotes || cs?.payload?.cleaningSummary || null;
 
       // Resolve feature submissions
       let submittedFeatures: Array<{
@@ -73,6 +88,12 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
         submissionStatus: sub?.status || 'not_started',
         submittedAt: sub?.submittedAt || null,
         isLocked: !!sub?.isLocked,
+        hasSubmittedCleaning,
+        cleanedDatasetUrl,
+        cleaningNotes,
+        validationDatasetReleased: !!team.validationDatasetReleased,
+        validationDatasetReleasedAt: team.validationDatasetReleasedAt || null,
+        validationDatasetReleasedBy: team.validationDatasetReleasedBy || null,
         features: submittedFeatures,
         mentorEvaluation: payload.mentorEvaluation || null,
       };
@@ -87,16 +108,82 @@ router.get('/teams', requireRole(['mentor', 'evaluator', 'admin']), async (req: 
 });
 
 /**
- * Submit mentor grading for each feature set
+ * Toggle or release validation dataset for a specific team (mentor / evaluator / admin)
  */
-router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+router.post('/teams/:teamId/validation-dataset', requireRole(['mentor', 'evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = MentorEvaluationSubmitSchema.parse(req.body);
-    const { teamId, featureGrades } = parsed;
+    const { teamId } = req.params;
+    const { released } = req.body;
 
     const team = await Team.findById(teamId);
     if (!team) {
       return res.status(404).json({ error: 'Team not found', message: 'The specified team does not exist.' });
+    }
+
+    const newReleasedState = typeof released === 'boolean' ? released : !team.validationDatasetReleased;
+    team.validationDatasetReleased = newReleasedState;
+    if (newReleasedState) {
+      team.validationDatasetReleasedAt = new Date();
+      team.validationDatasetReleasedBy = req.user?.email || 'Mentor';
+    } else {
+      team.validationDatasetReleasedAt = null;
+      team.validationDatasetReleasedBy = null;
+    }
+    await team.save();
+
+    await logAudit(
+      req.user!.email,
+      newReleasedState ? 'VALIDATION_DATASET_RELEASED' : 'VALIDATION_DATASET_REVOKED',
+      'Team',
+      team._id.toString(),
+      {
+        teamName: team.teamName,
+        released: newReleasedState,
+        releasedBy: req.user?.email,
+      }
+    );
+
+    return res.json({
+      message: `Validation dataset ${newReleasedState ? 'enabled' : 'disabled'} for team "${team.teamName}".`,
+      teamId: team._id.toString(),
+      validationDatasetReleased: newReleasedState,
+      validationDatasetReleasedAt: team.validationDatasetReleasedAt,
+      validationDatasetReleasedBy: team.validationDatasetReleasedBy,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Submit mentor grading for validation / feature performance
+ */
+router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = MentorEvaluationSubmitSchema.parse(req.body);
+    const {
+      teamId,
+      featureGrades,
+      marks,
+      accuracyScore,
+      confidenceScore,
+      feedback,
+      releaseValidationDataset,
+    } = parsed;
+
+    const team = await Team.findById(teamId);
+    if (!team) {
+      return res.status(404).json({ error: 'Team not found', message: 'The specified team does not exist.' });
+    }
+
+    // Optionally enable/disable validation dataset directly when saving grade
+    if (typeof releaseValidationDataset === 'boolean') {
+      team.validationDatasetReleased = releaseValidationDataset;
+      if (releaseValidationDataset) {
+        team.validationDatasetReleasedAt = new Date();
+        team.validationDatasetReleasedBy = req.user?.email || 'Mentor';
+      }
+      await team.save();
     }
 
     let submission = await Submission.findOne({
@@ -113,32 +200,49 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
       });
     }
 
-    // Calculate aggregated metrics
+    // Default accuracy and confidence score are 0, which mentors will fill up
     let totalMarks = 0;
-    let sumAccuracy = 0;
-    let sumConfidence = 0;
+    let overallAccuracyScore = 0;
+    let overallConfidenceScore = 0;
+    let formattedGrades: IMentorFeatureGrade[] = [];
 
-    const formattedGrades: IMentorFeatureGrade[] = featureGrades.map((g) => {
-      const marks = Math.min(10, Math.max(0, g.marks));
-      const accuracy = Math.min(100, Math.max(0, g.accuracyScore));
-      const confidence = Math.min(100, Math.max(0, g.confidenceScore));
-      totalMarks += marks;
-      sumAccuracy += accuracy;
-      sumConfidence += confidence;
-
-      return {
-        featureIndex: g.featureIndex,
-        companyName: g.companyName || '',
-        marks,
-        accuracyScore: accuracy,
-        confidenceScore: confidence,
-        feedback: g.feedback || '',
-      };
-    });
-
-    const count = formattedGrades.length || 1;
-    const overallAccuracyScore = Math.round(sumAccuracy / count);
-    const overallConfidenceScore = Math.round(sumConfidence / count);
+    if (marks !== undefined || accuracyScore !== undefined || confidenceScore !== undefined) {
+      totalMarks = Math.min(50, Math.max(0, Number(marks || 0)));
+      overallAccuracyScore = Math.min(100, Math.max(0, Number(accuracyScore || 0)));
+      overallConfidenceScore = Math.min(100, Math.max(0, Number(confidenceScore || 0)));
+      formattedGrades = [
+        {
+          featureIndex: 0,
+          companyName: '',
+          marks: totalMarks,
+          accuracyScore: overallAccuracyScore,
+          confidenceScore: overallConfidenceScore,
+          feedback: feedback || '',
+        },
+      ];
+    } else if (featureGrades && featureGrades.length > 0) {
+      let sumAccuracy = 0;
+      let sumConfidence = 0;
+      formattedGrades = featureGrades.map((g) => {
+        const m = Math.min(50, Math.max(0, g.marks));
+        const acc = Math.min(100, Math.max(0, g.accuracyScore));
+        const conf = Math.min(100, Math.max(0, g.confidenceScore));
+        totalMarks += m;
+        sumAccuracy += acc;
+        sumConfidence += conf;
+        return {
+          featureIndex: g.featureIndex,
+          companyName: g.companyName || '',
+          marks: m,
+          accuracyScore: acc,
+          confidenceScore: conf,
+          feedback: g.feedback || '',
+        };
+      });
+      const count = formattedGrades.length || 1;
+      overallAccuracyScore = Math.round(sumAccuracy / count);
+      overallConfidenceScore = Math.round(sumConfidence / count);
+    }
 
     const mentorEvaluation = {
       mentorId: null,
@@ -149,6 +253,7 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
       totalMarks,
       overallAccuracyScore,
       overallConfidenceScore,
+      feedback: feedback || '',
       gradedAt: new Date(),
     };
 
@@ -157,32 +262,6 @@ router.post('/grade-features', requireRole(['mentor', 'evaluator', 'admin']), as
       mentorEvaluation,
     };
     await submission.save();
-
-    // Upsert Evaluation document with status 'in_progress' so LeaderboardService incorporates preliminary marks
-    // while leaving the official evaluation available for Evaluators / Admins to complete
-    let evaluation = await Evaluation.findOne({
-      stage: 'requirements',
-      targetTeamId: team._id,
-    });
-
-    if (!evaluation) {
-      evaluation = new Evaluation({
-        stage: 'requirements',
-        targetTeamId: team._id,
-        submissionId: submission._id,
-        evaluatorEmail: req.user!.email,
-        score: totalMarks,
-        feedback: `Mentor Review by ${mentorEvaluation.mentorName} (Accuracy: ${overallAccuracyScore}%, Confidence: ${overallConfidenceScore}%)`,
-        status: 'in_progress',
-        leaseExpiresAt: null,
-      });
-    } else if (evaluation.status !== 'completed') {
-      evaluation.score = totalMarks;
-      evaluation.feedback = `Mentor Review by ${mentorEvaluation.mentorName} (Accuracy: ${overallAccuracyScore}%, Confidence: ${overallConfidenceScore}%)`;
-      evaluation.status = 'in_progress';
-      evaluation.leaseExpiresAt = null;
-    }
-    await evaluation.save();
 
     await logAudit(
       req.user!.email,

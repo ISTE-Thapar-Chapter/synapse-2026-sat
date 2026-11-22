@@ -892,6 +892,9 @@ router.patch('/config', requireAdmin, async (req: Request, res: Response, next: 
       cleaningDatasetTitle,
       cleaningDatasetUrl,
       cleaningDatasetDescription,
+      validationDatasetTitle,
+      validationDatasetUrl,
+      validationDatasetDescription,
       requirementTitles,
       featureDefinitions,
       leaderboardVisible,
@@ -905,6 +908,9 @@ router.patch('/config', requireAdmin, async (req: Request, res: Response, next: 
     if (cleaningDatasetTitle !== undefined) config.cleaningDatasetTitle = cleaningDatasetTitle;
     if (cleaningDatasetUrl !== undefined) config.cleaningDatasetUrl = cleaningDatasetUrl;
     if (cleaningDatasetDescription !== undefined) config.cleaningDatasetDescription = cleaningDatasetDescription;
+    if (validationDatasetTitle !== undefined) config.validationDatasetTitle = validationDatasetTitle;
+    if (validationDatasetUrl !== undefined) config.validationDatasetUrl = validationDatasetUrl;
+    if (validationDatasetDescription !== undefined) config.validationDatasetDescription = validationDatasetDescription;
     if (Array.isArray(featureDefinitions)) {
       config.featureDefinitions = featureDefinitions;
       config.requirementTitles = featureDefinitions.map((f: any) => f.title);

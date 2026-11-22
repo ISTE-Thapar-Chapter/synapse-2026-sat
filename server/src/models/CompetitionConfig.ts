@@ -71,6 +71,9 @@ export interface ICompetitionConfig extends Document {
   cleaningDatasetTitle: string;
   cleaningDatasetUrl: string;
   cleaningDatasetDescription: string;
+  validationDatasetTitle: string;
+  validationDatasetUrl: string;
+  validationDatasetDescription: string;
   requirementTitles: string[];
   featureDefinitions: IFeatureDefinition[];
   leaderboardVisible: boolean;
@@ -110,6 +113,21 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
     cleaningDatasetDescription: {
       type: String,
       default: 'Clean and impute missing sensor channels, handle outliers, and normalize coordinates.',
+      trim: true,
+    },
+    validationDatasetTitle: {
+      type: String,
+      default: 'Satellite Sensor Validation Dataset',
+      trim: true,
+    },
+    validationDatasetUrl: {
+      type: String,
+      default: 'https://datasets.iste.org/synapse/validation/satellite-val-v1.parquet',
+      trim: true,
+    },
+    validationDatasetDescription: {
+      type: String,
+      default: 'Official validation dataset used for evaluating accuracy and confidence metrics.',
       trim: true,
     },
     requirementTitles: {

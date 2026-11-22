@@ -267,9 +267,9 @@ describe('Full Synapse 2026 Event Workflow', () => {
     expect(res.body.submission.stage).toBe('requirements');
     expect(res.body.submission.payload.features.length).toBe(5);
     expect(res.body.submission.payload.features[0].companyName).toBe('Stripe Payments');
-    // Verify auto-calculated marks against answer key (10 marks * 5 exact matches = 50)
-    expect(res.body.submission.payload.mentorEvaluation.totalMarks).toBe(50);
-    expect(res.body.submission.payload.mentorEvaluation.overallAccuracyScore).toBe(100);
+    // Default accuracy and confidence score are 0 upon submission, awaiting mentor grading
+    expect(res.body.submission.payload.mentorEvaluation.totalMarks).toBe(0);
+    expect(res.body.submission.payload.mentorEvaluation.overallAccuracyScore).toBe(0);
 
     // Submit for Team B as well
     await request(app)

@@ -9,6 +9,33 @@ import { DEFAULT_QUIZ_QUESTIONS } from '../data/defaultQuizQuestions.js';
 
 const router = Router();
 
+export function checkFlagMatch(submitted: string, acceptedList?: string[]): boolean {
+  if (!submitted || typeof submitted !== 'string' || !acceptedList || acceptedList.length === 0) return false;
+  const cleanSub = submitted.trim().toLowerCase();
+  if (!cleanSub) return false;
+
+  // Extract inner string inside curly braces if present: e.g. "istectf{foo}" -> "foo"
+  const subMatch = cleanSub.match(/\{([^}]+)\}/);
+  const subInner = subMatch ? subMatch[1].trim() : cleanSub;
+
+  for (const acc of acceptedList) {
+    if (!acc) continue;
+    const cleanAcc = acc.trim().toLowerCase();
+    const accMatch = cleanAcc.match(/\{([^}]+)\}/);
+    const accInner = accMatch ? accMatch[1].trim() : cleanAcc;
+
+    if (
+      cleanSub === cleanAcc ||
+      subInner === accInner ||
+      cleanSub === accInner ||
+      subInner === cleanAcc
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function getOrInitConfig() {
   let config = await CompetitionConfig.findOne();
   if (!config) {
@@ -17,12 +44,26 @@ async function getOrInitConfig() {
       quizStatus: 'not_started',
       quizMultiplier: 100000,
     });
-  } else if (!config.quizQuestions || config.quizQuestions.length !== 20 || config.quizMultiplier === 100) {
-    config.quizQuestions = DEFAULT_QUIZ_QUESTIONS as any;
-    if (config.quizMultiplier === 100 || !config.quizMultiplier) {
-      config.quizMultiplier = 100000;
+  } else {
+    const firstQ = config.quizQuestions?.[0];
+    const isOldCampusQuestions =
+      firstQ &&
+      (firstQ.question?.includes('Nava Nalanda') ||
+        firstQ.question?.includes('depressing place') ||
+        !firstQ.category);
+
+    if (
+      !config.quizQuestions ||
+      config.quizQuestions.length !== 20 ||
+      config.quizMultiplier === 100 ||
+      isOldCampusQuestions
+    ) {
+      config.quizQuestions = DEFAULT_QUIZ_QUESTIONS as any;
+      if (config.quizMultiplier === 100 || !config.quizMultiplier) {
+        config.quizMultiplier = 100000;
+      }
+      await config.save();
     }
-    await config.save();
   }
   return config;
 }
@@ -105,23 +146,32 @@ router.get('/questions', requireAuth, async (req: Request, res: Response, next: 
       if (isStaff) {
         return {
           id: q.id,
+          title: q.title || `Challenge #${q.id}`,
           question: q.question,
-          options: q.options,
+          options: q.options || [],
           correct: q.correct,
+          acceptedFlags: q.acceptedFlags || [],
           image: q.image || '',
-          type: q.type || 'multiple_choice',
+          type: q.type || 'flag',
           points: q.points || 1,
           difficulty,
+          hint: q.hint || '',
+          resourceLink: q.resourceLink || '',
+          category: q.category || 'General CTF',
         };
       }
       return {
         id: q.id,
+        title: q.title || `Challenge #${q.id}`,
         question: q.question,
-        options: q.options,
+        options: q.options || [],
         image: q.image || '',
-        type: q.type || 'multiple_choice',
+        type: q.type || 'flag',
         points: q.points || 1,
         difficulty,
+        hint: q.hint || '',
+        resourceLink: q.resourceLink || '',
+        category: q.category || 'General CTF',
       };
     });
 
@@ -189,14 +239,39 @@ router.post('/submit', requireAuth, requireTeamLeader, async (req: Request, res:
       });
     }
 
-    // Sanitize and validate answers
-    const sanitizedAnswers: Array<{ questionId: number; selectedOption: number }> = [];
+    // Sanitize and validate answers (both option selections and text/flag submissions)
+    const sanitizedAnswers: Array<{
+      questionId: number;
+      selectedOption: number | null;
+      textAnswer: string;
+      flag: string;
+    }> = [];
+
     for (const item of answers) {
       const qId = Number(item.questionId);
-      const opt = Number(item.selectedOption);
-      if (!isNaN(qId) && !isNaN(opt) && opt >= 0 && opt < 10) {
-        sanitizedAnswers.push({ questionId: qId, selectedOption: opt });
-      }
+      if (isNaN(qId)) continue;
+
+      const opt =
+        item.selectedOption !== undefined &&
+        item.selectedOption !== null &&
+        !isNaN(Number(item.selectedOption))
+          ? Number(item.selectedOption)
+          : null;
+      const text =
+        typeof item.textAnswer === 'string'
+          ? item.textAnswer.trim()
+          : typeof item.flag === 'string'
+          ? item.flag.trim()
+          : typeof item.answer === 'string'
+          ? item.answer.trim()
+          : '';
+
+      sanitizedAnswers.push({
+        questionId: qId,
+        selectedOption: opt,
+        textAnswer: text,
+        flag: text,
+      });
     }
 
     // Backend evaluation against secret answer key
@@ -211,12 +286,37 @@ router.post('/submit', requireAuth, requireTeamLeader, async (req: Request, res:
       const q = questionMap.get(ans.questionId);
       if (!q) continue;
 
-      if (q.correct !== null && q.correct !== undefined) {
-        if (Number(ans.selectedOption) === Number(q.correct)) {
-          calculatedScore += Number(q.points) || 1;
+      let isCorrect = false;
+
+      // 1. Check flag / text answer match if acceptedFlags configured
+      if (q.acceptedFlags && q.acceptedFlags.length > 0) {
+        const optionText =
+          ans.selectedOption !== null && q.options && q.options[ans.selectedOption]
+            ? q.options[ans.selectedOption]
+            : '';
+        const candidate = ans.textAnswer || ans.flag || optionText;
+        if (checkFlagMatch(candidate, q.acceptedFlags)) {
+          isCorrect = true;
         }
-      } else if (q.type === 'poll' || q.correct === null) {
-        // Poll question participation point
+      }
+
+      // 2. Check multiple-choice option index if question has correct option index
+      if (!isCorrect && q.correct !== null && q.correct !== undefined) {
+        if (ans.selectedOption !== null && Number(ans.selectedOption) === Number(q.correct)) {
+          isCorrect = true;
+        }
+      }
+
+      // 3. Poll question participation point
+      if (
+        !isCorrect &&
+        (q.type === 'poll' ||
+          (q.correct === null && (!q.acceptedFlags || q.acceptedFlags.length === 0)))
+      ) {
+        isCorrect = true;
+      }
+
+      if (isCorrect) {
         calculatedScore += Number(q.points) || 1;
       }
     }
@@ -349,6 +449,7 @@ router.put(
 
       const sanitized = questions.map((q: any, idx: number) => ({
         id: Number(q.id) || idx + 1,
+        title: String(q.title || `Challenge #${q.id || idx + 1}`).trim(),
         question: String(q.question || '').trim(),
         options: Array.isArray(q.options)
           ? q.options.map((o: any) => String(o).trim())
@@ -357,8 +458,16 @@ router.put(
           q.correct !== null && q.correct !== undefined && !isNaN(Number(q.correct))
             ? Number(q.correct)
             : null,
+        acceptedFlags: Array.isArray(q.acceptedFlags)
+          ? q.acceptedFlags.map((f: any) => String(f).trim()).filter(Boolean)
+          : typeof q.acceptedFlags === 'string' && q.acceptedFlags.trim()
+          ? [q.acceptedFlags.trim()]
+          : [],
         image: typeof q.image === 'string' ? q.image.trim() : '',
-        type: q.type === 'poll' ? 'poll' : 'multiple_choice',
+        hint: typeof q.hint === 'string' ? q.hint.trim() : '',
+        resourceLink: typeof q.resourceLink === 'string' ? q.resourceLink.trim() : '',
+        category: typeof q.category === 'string' ? q.category.trim() : '',
+        type: q.type === 'multiple_choice' ? 'multiple_choice' : q.type === 'poll' ? 'poll' : 'flag',
         points: Number(q.points) > 0 ? Number(q.points) : (q.difficulty === 'hard' ? 3 : q.difficulty === 'medium' ? 2 : 1),
         difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty)
           ? q.difficulty

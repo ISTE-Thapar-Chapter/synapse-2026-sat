@@ -2,7 +2,9 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
 
 export interface IQuizSubmissionAnswer {
   questionId: number;
-  selectedOption: number;
+  selectedOption?: number | null;
+  textAnswer?: string;
+  flag?: string;
 }
 
 export interface IQuizSubmission extends Document {
@@ -45,7 +47,9 @@ const QuizSubmissionSchema = new Schema<IQuizSubmission>(
     answers: [
       {
         questionId: { type: Number, required: true },
-        selectedOption: { type: Number, required: true },
+        selectedOption: { type: Number, default: null },
+        textAnswer: { type: String, default: '' },
+        flag: { type: String, default: '' },
       },
     ],
     score: {

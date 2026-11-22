@@ -179,7 +179,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
       expect(q).toHaveProperty('id');
       expect(q).toHaveProperty('question');
       expect(q).toHaveProperty('options');
-      expect(q.options.length).toBeGreaterThan(0);
+      expect(Array.isArray(q.options)).toBe(true);
     }
   });
 
@@ -189,7 +189,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
       .set('Authorization', `Bearer ${evaluatorToken}`);
     expect(res.status).toBe(200);
     expect(res.body.questions).toHaveLength(20);
-    expect(res.body.questions[0]).toHaveProperty('correct');
+    expect(res.body.questions[0]).toHaveProperty('acceptedFlags');
   });
 
   it('should allow team members (non-leaders) to view questions through their devices', async () => {
@@ -199,7 +199,7 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
     expect(res.status).toBe(200);
     expect(res.body.questions).toHaveLength(20);
     // Answers must be stripped
-    expect(res.body.questions[0]).not.toHaveProperty('correct');
+    expect(res.body.questions[0]).not.toHaveProperty('acceptedFlags');
   });
 
   it('should prevent team members (non-leaders) from submitting answers', async () => {
@@ -207,22 +207,23 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
       .post('/api/quiz/submit')
       .set('Authorization', `Bearer ${team1MemberToken}`)
       .send({
-        answers: [{ questionId: 1, selectedOption: 3 }],
+        answers: [{ questionId: 1, flag: 'AIML{transformer}' }],
       });
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('Leader Authorization Required');
   });
 
   it('should allow team 1 to submit batch responses and automatically calculate score on backend strictly', async () => {
-    // Question 1: correct is 3
-    // Question 2: correct is 1
-    // Question 3: correct is 2
-    // Question 4: correct is 1
+    // 4 correct answers across Easy challenges (1 pt each = 4 pts total)
+    // Q1: 'AIML{transformer}'
+    // Q2: 'isteCTF{layer}'
+    // Q3: 'AIML{False_2_4}'
+    // Q4: 'CTF{r0b0ts_txt_r3v3als_a11}'
     const answers = [
-      { questionId: 1, selectedOption: 3 }, // correct
-      { questionId: 2, selectedOption: 1 }, // correct
-      { questionId: 3, selectedOption: 2 }, // correct
-      { questionId: 4, selectedOption: 1 }, // correct
+      { questionId: 1, flag: 'AIML{transformer}' }, // 1 pt
+      { questionId: 2, flag: 'isteCTF{layer}' }, // 1 pt
+      { questionId: 3, flag: 'AIML{False_2_4}' }, // 1 pt
+      { questionId: 4, flag: 'CTF{r0b0ts_txt_r3v3als_a11}' }, // 1 pt
     ];
 
     const res = await request(app)
@@ -363,7 +364,11 @@ describe('Automated Knowledge Assessment (Quiz) System', () => {
 
     const questions = getRes.body.questions;
     questions[0].question = 'Updated test question for Synapse 2026?';
-    questions[0].options[0] = 'Custom Modified Option';
+    if (!questions[0].options || questions[0].options.length === 0) {
+      questions[0].options = ['Custom Modified Option'];
+    } else {
+      questions[0].options[0] = 'Custom Modified Option';
+    }
 
     const putRes = await request(app)
       .put('/api/quiz/admin/questions')

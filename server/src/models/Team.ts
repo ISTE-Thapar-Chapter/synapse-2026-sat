@@ -2,6 +2,7 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
 
 export interface ITeam extends Document {
   teamName: string;
+  college?: string;
   members: Types.ObjectId[];
   leaderId: Types.ObjectId | null;
   disqualified: boolean;
@@ -17,6 +18,7 @@ export interface ITeam extends Document {
 const TeamSchema = new Schema<ITeam>(
   {
     teamName: { type: String, required: true, unique: true, trim: true, index: true },
+    college: { type: String, default: '', trim: true },
     members: [{ type: Schema.Types.ObjectId, ref: 'Participant' }],
     leaderId: { type: Schema.Types.ObjectId, ref: 'Participant', default: null },
     disqualified: { type: Boolean, default: false, index: true },

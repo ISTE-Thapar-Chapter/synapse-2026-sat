@@ -51,6 +51,7 @@ export interface IWinnerPodiumItem {
 
 export interface IQuizQuestion {
   id: number;
+  title?: string;
   question: string;
   options: string[];
   correct: number | null;
@@ -58,6 +59,10 @@ export interface IQuizQuestion {
   type?: string;
   points?: number;
   difficulty?: 'easy' | 'medium' | 'hard' | string;
+  acceptedFlags?: string[];
+  hint?: string;
+  resourceLink?: string;
+  category?: string;
 }
 
 export interface IWinnersAnnouncement {
@@ -172,13 +177,18 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
     quizQuestions: [
       {
         id: { type: Number, required: true },
+        title: { type: String, default: '' },
         question: { type: String, required: true },
         options: { type: [String], default: [] },
         correct: { type: Number, default: null },
         image: { type: String, default: '' },
-        type: { type: String, default: 'multiple_choice' },
+        type: { type: String, default: 'flag' },
         points: { type: Number, default: 1 },
         difficulty: { type: String, enum: ['easy', 'medium', 'hard'], default: 'easy' },
+        acceptedFlags: { type: [String], default: [] },
+        hint: { type: String, default: '' },
+        resourceLink: { type: String, default: '' },
+        category: { type: String, default: '' },
       },
     ],
     liveAuction: {

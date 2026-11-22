@@ -188,6 +188,22 @@ export interface CompetitionConfig {
   winnersAnnouncement?: WinnersAnnouncement;
 }
 
+export interface QuizQuestionItem {
+  id: number;
+  title?: string;
+  question: string;
+  options: string[];
+  correct?: number | null;
+  acceptedFlags?: string[];
+  image?: string;
+  type?: 'flag' | 'text' | 'multiple_choice' | string;
+  points?: number;
+  difficulty?: 'easy' | 'medium' | 'hard' | string;
+  hint?: string;
+  resourceLink?: string;
+  category?: string;
+}
+
 export interface FeatureSetSubmissionItem {
   featureIndex: number;
   title?: string;

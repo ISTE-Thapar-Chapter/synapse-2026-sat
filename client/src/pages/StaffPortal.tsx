@@ -4871,112 +4871,234 @@ export const StaffPortal: React.FC = () => {
                     </button>
                   </div>
 
+                  {/* Title & Category */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
+                        Challenge Title
+                      </label>
+                      <input
+                        type="text"
+                        value={q.title || ''}
+                        onChange={(e) => {
+                          const updated = [...adminQuizQuestions];
+                          updated[qIdx].title = e.target.value;
+                          setAdminQuizQuestions(updated);
+                        }}
+                        placeholder="e.g. The Spectrogram Secret"
+                        className="input-field text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
+                        Category
+                      </label>
+                      <input
+                        type="text"
+                        value={q.category || ''}
+                        onChange={(e) => {
+                          const updated = [...adminQuizQuestions];
+                          updated[qIdx].category = e.target.value;
+                          setAdminQuizQuestions(updated);
+                        }}
+                        placeholder="e.g. Cryptography, Network Forensics"
+                        className="input-field text-xs"
+                      />
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
-                      Question Prompt *
+                      Question / Challenge Prompt *
                     </label>
                     <textarea
-                      rows={2}
+                      rows={4}
                       value={q.question || ''}
                       onChange={(e) => {
                         const updated = [...adminQuizQuestions];
                         updated[qIdx].question = e.target.value;
                         setAdminQuizQuestions(updated);
                       }}
-                      placeholder="Enter the question text"
-                      className="input-field text-xs"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
-                      Optional Image URL
-                    </label>
-                    <input
-                      type="text"
-                      value={q.image || ''}
-                      onChange={(e) => {
-                        const updated = [...adminQuizQuestions];
-                        updated[qIdx].image = e.target.value;
-                        setAdminQuizQuestions(updated);
-                      }}
-                      placeholder="https://example.com/diagram.png"
+                      placeholder="Enter scenario description or challenge prompt"
                       className="input-field text-xs font-mono"
                     />
+                    <span className="text-[10px] text-ink-muted block mt-0.5">
+                      Tip: Line breaks (Enter) and code formatting are preserved on participant devices.
+                    </span>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
-                      Options & Correct Answer Selection
-                    </label>
-                    <div className="space-y-2">
-                      {(q.options || ['', '', '', '']).map((opt: string, optIdx: number) => {
-                        const isCorrect = q.correct === optIdx;
-                        return (
-                          <div key={optIdx} className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const updated = [...adminQuizQuestions];
-                                updated[qIdx].correct = optIdx;
-                                updated[qIdx].type = 'multiple_choice';
-                                setAdminQuizQuestions(updated);
-                              }}
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold border transition-colors ${
-                                isCorrect
-                                  ? 'bg-emerald-600 text-white border-emerald-600'
-                                  : 'bg-white text-ink border-mist hover:border-ink-muted'
-                              }`}
-                              title={isCorrect ? 'Correct option' : 'Click to set as correct option'}
-                            >
-                              {String.fromCharCode(65 + optIdx)}
-                              {isCorrect ? ' ✓' : ''}
-                            </button>
-                            <input
-                              type="text"
-                              value={opt}
-                              onChange={(e) => {
-                                const updated = [...adminQuizQuestions];
-                                const opts = [...(updated[qIdx].options || [])];
-                                opts[optIdx] = e.target.value;
-                                updated[qIdx].options = opts;
-                                setAdminQuizQuestions(updated);
-                              }}
-                              placeholder={`Option ${String.fromCharCode(65 + optIdx)} text`}
-                              className={`input-field text-xs flex-1 ${
-                                isCorrect ? 'border-emerald-500 bg-emerald-50/30' : ''
-                              }`}
-                            />
-                          </div>
-                        );
-                      })}
+                  {/* Resource Link & Hint */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
+                        Resource / Download Link (Drive/URL)
+                      </label>
+                      <input
+                        type="text"
+                        value={q.resourceLink || ''}
+                        onChange={(e) => {
+                          const updated = [...adminQuizQuestions];
+                          updated[qIdx].resourceLink = e.target.value;
+                          setAdminQuizQuestions(updated);
+                        }}
+                        placeholder="https://drive.google.com/..."
+                        className="input-field text-xs font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
+                        Hint (Visible to teams upon clicking Reveal)
+                      </label>
+                      <input
+                        type="text"
+                        value={q.hint || ''}
+                        onChange={(e) => {
+                          const updated = [...adminQuizQuestions];
+                          updated[qIdx].hint = e.target.value;
+                          setAdminQuizQuestions(updated);
+                        }}
+                        placeholder="e.g. Check Wireshark Follow TCP stream"
+                        className="input-field text-xs"
+                      />
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-1 text-[11px]">
-                    <div className="flex items-center gap-2">
-                      <span className="text-ink-muted">Type:</span>
-                      <button
-                        type="button"
-                        onClick={() => {
+                  {/* Type Selector */}
+                  <div className="flex items-center gap-3 py-1">
+                    <span className="text-[11px] font-semibold text-ink uppercase">Answer Mode:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = [...adminQuizQuestions];
+                        updated[qIdx].type = 'flag';
+                        setAdminQuizQuestions(updated);
+                      }}
+                      className={`px-2.5 py-1 rounded text-xs font-bold border transition-colors ${
+                        q.type !== 'multiple_choice'
+                          ? 'bg-signal text-white border-signal'
+                          : 'bg-white text-ink border-mist'
+                      }`}
+                    >
+                      CTF Flag / Exact Text
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = [...adminQuizQuestions];
+                        updated[qIdx].type = 'multiple_choice';
+                        if (updated[qIdx].correct === null) updated[qIdx].correct = 0;
+                        setAdminQuizQuestions(updated);
+                      }}
+                      className={`px-2.5 py-1 rounded text-xs font-bold border transition-colors ${
+                        q.type === 'multiple_choice'
+                          ? 'bg-signal text-white border-signal'
+                          : 'bg-white text-ink border-mist'
+                      }`}
+                    >
+                      Multiple Choice (MCQ)
+                    </button>
+                  </div>
+
+                  {/* Mode Specific Inputs */}
+                  {q.type !== 'multiple_choice' ? (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-0.5">
+                        Accepted Flags (comma separated) *
+                      </label>
+                      <input
+                        type="text"
+                        value={
+                          Array.isArray(q.acceptedFlags)
+                            ? q.acceptedFlags.join(', ')
+                            : q.acceptedFlags || ''
+                        }
+                        onChange={(e) => {
                           const updated = [...adminQuizQuestions];
-                          if (updated[qIdx].type === 'poll') {
-                            updated[qIdx].type = 'multiple_choice';
-                            updated[qIdx].correct = 0;
-                          } else {
-                            updated[qIdx].type = 'poll';
-                            updated[qIdx].correct = null;
-                          }
+                          const flags = e.target.value
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          updated[qIdx].acceptedFlags = flags;
                           setAdminQuizQuestions(updated);
                         }}
-                        className="px-2 py-0.5 rounded text-[10px] font-bold border border-mist bg-white hover:bg-mist text-ink"
+                        placeholder="e.g. isteCTF{flag_name}, flag_name, CTF{flag_name}"
+                        className="input-field text-xs font-mono text-emerald-800 bg-emerald-50/40 border-emerald-300"
+                      />
+                      <span className="text-[10px] text-ink-muted">
+                        Teams will receive points if their submission matches any of these flags (case-insensitive & whitespace-trimmed).
+                      </span>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-ink uppercase mb-1">
+                        Options & Correct Answer Selection
+                      </label>
+                      <div className="space-y-2">
+                        {(q.options || ['', '', '', '']).map((opt: string, optIdx: number) => {
+                          const isCorrect = q.correct === optIdx;
+                          return (
+                            <div key={optIdx} className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...adminQuizQuestions];
+                                  updated[qIdx].correct = optIdx;
+                                  setAdminQuizQuestions(updated);
+                                }}
+                                className={`px-2.5 py-1 rounded text-[11px] font-bold border transition-colors ${
+                                  isCorrect
+                                    ? 'bg-emerald-600 text-white border-emerald-600'
+                                    : 'bg-white text-ink border-mist hover:border-ink-muted'
+                                }`}
+                                title={isCorrect ? 'Correct option' : 'Click to set as correct option'}
+                              >
+                                {String.fromCharCode(65 + optIdx)}
+                                {isCorrect ? ' ✓' : ''}
+                              </button>
+                              <input
+                                type="text"
+                                value={opt}
+                                onChange={(e) => {
+                                  const updated = [...adminQuizQuestions];
+                                  const opts = [...(updated[qIdx].options || [])];
+                                  opts[optIdx] = e.target.value;
+                                  updated[qIdx].options = opts;
+                                  setAdminQuizQuestions(updated);
+                                }}
+                                placeholder={`Option ${String.fromCharCode(65 + optIdx)} text`}
+                                className={`input-field text-xs flex-1 ${
+                                  isCorrect ? 'border-emerald-500 bg-emerald-50/30' : ''
+                                }`}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-[11px] border-t border-mist/60">
+                    <div className="flex items-center gap-2">
+                      <span className="text-ink-muted">Difficulty:</span>
+                      <select
+                        value={q.difficulty || (q.points === 3 ? 'hard' : q.points === 2 ? 'medium' : 'easy')}
+                        onChange={(e) => {
+                          const updated = [...adminQuizQuestions];
+                          const diff = e.target.value as 'easy' | 'medium' | 'hard';
+                          updated[qIdx].difficulty = diff;
+                          updated[qIdx].points = diff === 'hard' ? 3 : diff === 'medium' ? 2 : 1;
+                          setAdminQuizQuestions(updated);
+                        }}
+                        className="px-2 py-1 rounded border border-mist text-xs bg-white text-ink"
                       >
-                        {q.type === 'poll' ? 'Feedback / Poll (No wrong answer)' : 'Graded Question'}
-                      </button>
+                        <option value="easy">Easy (1 pt)</option>
+                        <option value="medium">Medium (2 pts)</option>
+                        <option value="hard">Hard (3 pts)</option>
+                      </select>
                     </div>
 
                     <div className="flex items-center gap-1.5">
-                      <span className="text-ink-muted">Points:</span>
+                      <span className="text-ink-muted">Points Awarded:</span>
                       <input
                         type="number"
                         min={1}

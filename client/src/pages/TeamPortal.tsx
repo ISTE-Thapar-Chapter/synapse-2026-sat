@@ -32,6 +32,9 @@ import {
   Gavel,
   FileQuestion,
   ShieldAlert,
+  HelpCircle,
+  Flag,
+  Key,
 } from 'lucide-react';
 
 export const TeamPortal: React.FC = () => {
@@ -115,9 +118,22 @@ export const TeamPortal: React.FC = () => {
   // Knowledge Assessment State
   const [quizStatus, setQuizStatus] = useState<'not_started' | 'active' | 'closed'>('not_started');
   const [quizQuestions, setQuizQuestions] = useState<
-    Array<{ id: number; question: string; options: string[]; image?: string; type?: string; points?: number }>
+    Array<{
+      id: number;
+      title?: string;
+      question: string;
+      options: string[];
+      image?: string;
+      type?: string;
+      points?: number;
+      difficulty?: string;
+      hint?: string;
+      resourceLink?: string;
+      category?: string;
+    }>
   >([]);
   const [quizSelectedAnswers, setQuizSelectedAnswers] = useState<Record<number, number>>({});
+  const [quizTextAnswers, setQuizTextAnswers] = useState<Record<number, string>>({});
   const [quizHasSubmitted, setQuizHasSubmitted] = useState<boolean>(false);
   const [quizSubmittedAt, setQuizSubmittedAt] = useState<Date | null>(null);
   const [quizSubmitting, setQuizSubmitting] = useState<boolean>(false);
@@ -454,11 +470,16 @@ export const TeamPortal: React.FC = () => {
           quizStatus: string;
           questions: Array<{
             id: number;
+            title?: string;
             question: string;
             options: string[];
             image?: string;
             type?: string;
             points?: number;
+            difficulty?: string;
+            hint?: string;
+            resourceLink?: string;
+            category?: string;
           }>;
         }>('/quiz/questions');
         setQuizQuestions(questionsRes.questions || []);
@@ -480,6 +501,72 @@ export const TeamPortal: React.FC = () => {
     }));
   };
 
+  const handleQuizTextChange = (questionId: number, text: string) => {
+    if (quizStatus !== 'active' || quizHasSubmitted) return;
+    setQuizTextAnswers((prev) => ({
+      ...prev,
+      [questionId]: text,
+    }));
+  };
+
+  const renderQuestionFormatted = (rawText: string) => {
+    if (!rawText) return null;
+    // Normalize both literal "\n" strings (escaped backslash-n from DB/JSON) and actual newlines
+    const normalized = rawText
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+
+    const lines = normalized.split('\n');
+
+    return (
+      <div className="space-y-1.5 font-sans leading-relaxed text-xs sm:text-sm text-ink">
+        {lines.map((line, idx) => {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            return <div key={idx} className="h-2" />;
+          }
+
+          // Format code blocks or distinctive tokens
+          const isCode =
+            trimmed.startsWith('print(') ||
+            trimmed.startsWith('SELECT ') ||
+            trimmed.startsWith('import ') ||
+            trimmed === 'dHJhbnNmb3JtZXI=' ||
+            trimmed === 'YV9lcnJ1Y19zaWQ=';
+
+          if (isCode) {
+            return (
+              <div
+                key={idx}
+                className="my-1.5 px-3 py-2 rounded-md bg-paper border border-mist font-mono text-xs text-signal font-bold select-all overflow-x-auto shadow-2xs"
+              >
+                {line}
+              </div>
+            );
+          }
+
+          // Format numbered list items or bullet lines
+          const isListItem = /^(?:[0-9]+[.)]|[-•*])\s+/.test(trimmed);
+
+          return (
+            <div
+              key={idx}
+              className={`${
+                isListItem
+                  ? 'pl-3.5 py-0.5 border-l-2 border-signal/40 font-medium text-ink bg-signal/5 rounded-r'
+                  : ''
+              }`}
+            >
+              {line}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const handleSubmitQuiz = async () => {
     if (quizStatus !== 'active' || quizHasSubmitted) return;
     if (!isLeader) {
@@ -492,10 +579,25 @@ export const TeamPortal: React.FC = () => {
     setQuizSubmitting(true);
     setQuizNotice(null);
     try {
-      const answersArray = Object.entries(quizSelectedAnswers).map(([qId, optIdx]) => ({
-        questionId: Number(qId),
-        selectedOption: Number(optIdx),
-      }));
+      const answersMap = new Map<number, { questionId: number; selectedOption?: number | null; textAnswer?: string }>();
+
+      for (const [qIdStr, optIdx] of Object.entries(quizSelectedAnswers)) {
+        const qId = Number(qIdStr);
+        if (!isNaN(qId)) {
+          answersMap.set(qId, { questionId: qId, selectedOption: Number(optIdx), textAnswer: quizTextAnswers[qId] || '' });
+        }
+      }
+
+      for (const [qIdStr, text] of Object.entries(quizTextAnswers)) {
+        const qId = Number(qIdStr);
+        if (!isNaN(qId) && text.trim()) {
+          const existing = answersMap.get(qId) || { questionId: qId, selectedOption: null, textAnswer: '' };
+          existing.textAnswer = text.trim();
+          answersMap.set(qId, existing);
+        }
+      }
+
+      const answersArray = Array.from(answersMap.values());
 
       const res = await api.post<{
         success: boolean;
@@ -1978,27 +2080,36 @@ export const TeamPortal: React.FC = () => {
                         {/* Questions List */}
                         {quizLoading && quizQuestions.length === 0 ? (
                           <div className="p-12 text-center text-xs text-ink-muted">
-                            Loading assessment questions...
+                            Loading assessment challenges...
                           </div>
                         ) : (
-                          <div className="space-y-4">
+                          <div className="space-y-5">
                             {quizQuestions.map((q, qIndex) => {
                               const selectedOpt = quizSelectedAnswers[q.id];
-                              const isAnswered = selectedOpt !== undefined;
+                              const enteredText = quizTextAnswers[q.id];
+                              const isAnswered = selectedOpt !== undefined || !!enteredText?.trim();
 
                               return (
                                 <div
                                   key={q.id}
-                                  className={`p-5 rounded-xl border transition-all ${
+                                  className={`p-5 sm:p-6 rounded-xl border transition-all ${
                                     isAnswered
-                                      ? 'bg-white border-signal/40 shadow-xs'
+                                      ? 'bg-white border-signal/40 shadow-xs ring-1 ring-signal/10'
                                       : 'bg-paper/40 border-mist'
                                   }`}
                                 >
-                                  <div className="flex items-start justify-between gap-3 mb-2">
-                                    <span className="text-xs font-bold text-ink-muted uppercase tracking-wider">
-                                      Question {qIndex + 1} of {quizQuestions.length}
-                                    </span>
+                                  {/* Challenge Header */}
+                                  <div className="flex flex-wrap items-center justify-between gap-2.5 mb-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs font-bold text-ink-muted uppercase tracking-wider">
+                                        Challenge {qIndex + 1} of {quizQuestions.length}
+                                      </span>
+                                      {q.category && (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-signal/10 text-signal border border-signal/20">
+                                          {q.category}
+                                        </span>
+                                      )}
+                                    </div>
                                     <div className="flex items-center gap-2">
                                       <span
                                         className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
@@ -2017,51 +2128,101 @@ export const TeamPortal: React.FC = () => {
                                     </div>
                                   </div>
 
-                                  <p className="text-sm font-medium text-ink leading-relaxed mb-3">
-                                    {q.question}
-                                  </p>
+                                  {/* Challenge Title */}
+                                  {q.title && (
+                                    <h4 className="text-sm sm:text-base font-bold text-ink mb-2">
+                                      {q.title}
+                                    </h4>
+                                  )}
 
+                                  {/* Challenge Description / Code Prompt with newline and code handling */}
+                                  <div className="mb-3.5 bg-paper/60 p-3.5 rounded-lg border border-mist/80">
+                                    {renderQuestionFormatted(q.question)}
+                                  </div>
+
+                                  {/* Resource Link (only if required by the challenge) */}
+                                  {q.resourceLink && q.resourceLink.trim() !== '' && (
+                                    <div className="mb-3.5">
+                                      <a
+                                        href={q.resourceLink}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-signal/10 hover:bg-signal/20 text-signal border border-signal/30 transition-colors"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" /> Download / Access Required Challenge Asset
+                                      </a>
+                                    </div>
+                                  )}
+
+                                  {/* Image Reference */}
                                   {q.image && (
                                     <div className="mb-4 max-w-lg rounded-lg overflow-hidden border border-mist bg-black/5">
                                       <img
                                         src={q.image}
-                                        alt={`Question ${qIndex + 1} reference`}
+                                        alt={`Challenge ${qIndex + 1} reference`}
                                         className="w-full h-auto max-h-72 object-contain"
                                       />
                                     </div>
                                   )}
 
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    {q.options.map((opt, optIndex) => {
-                                      const isSelected = selectedOpt === optIndex;
-                                      const optLetter = String.fromCharCode(65 + optIndex);
+                                  {/* Input Area: Multiple Choice or Flag Input */}
+                                  {q.options && q.options.length > 0 ? (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                      {q.options.map((opt, optIndex) => {
+                                        const isSelected = selectedOpt === optIndex;
+                                        const optLetter = String.fromCharCode(65 + optIndex);
 
-                                      return (
-                                        <button
-                                          key={optIndex}
-                                          type="button"
-                                          disabled={quizStatus === 'closed'}
-                                          onClick={() => handleSelectQuizOption(q.id, optIndex)}
-                                          className={`text-left p-3 rounded-lg border text-xs transition-all flex items-start gap-2.5 ${
-                                            isSelected
-                                              ? 'bg-signal/10 border-signal text-ink font-semibold shadow-xs ring-1 ring-signal'
-                                              : 'bg-white hover:bg-paper/80 border-mist text-ink'
-                                          } ${quizStatus === 'closed' ? 'cursor-default' : 'cursor-pointer'}`}
-                                        >
-                                          <span
-                                            className={`w-6 h-6 rounded flex items-center justify-center font-bold text-xs shrink-0 transition-colors ${
+                                        return (
+                                          <button
+                                            key={optIndex}
+                                            type="button"
+                                            disabled={quizStatus === 'closed'}
+                                            onClick={() => handleSelectQuizOption(q.id, optIndex)}
+                                            className={`text-left p-3 rounded-lg border text-xs transition-all flex items-start gap-2.5 ${
                                               isSelected
-                                                ? 'bg-signal text-white'
-                                                : 'bg-paper text-ink-muted border border-mist'
-                                            }`}
+                                                ? 'bg-signal/10 border-signal text-ink font-semibold shadow-xs ring-1 ring-signal'
+                                                : 'bg-white hover:bg-paper/80 border-mist text-ink'
+                                            } ${quizStatus === 'closed' ? 'cursor-default' : 'cursor-pointer'}`}
                                           >
-                                            {optLetter}
+                                            <span
+                                              className={`w-6 h-6 rounded flex items-center justify-center font-bold text-xs shrink-0 transition-colors ${
+                                                isSelected
+                                                  ? 'bg-signal text-white'
+                                                  : 'bg-paper text-ink-muted border border-mist'
+                                              }`}
+                                            >
+                                              {optLetter}
+                                            </span>
+                                            <span className="pt-0.5 leading-snug flex-1">{opt}</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-1.5">
+                                      <label className="block text-[11px] font-bold text-ink-muted uppercase tracking-wider flex items-center gap-1.5">
+                                        <Flag className="w-3.5 h-3.5 text-signal" /> Enter CTF Flag or Exact Answer:
+                                      </label>
+                                      <div className="relative">
+                                        <input
+                                          type="text"
+                                          disabled={quizStatus === 'closed' || quizHasSubmitted}
+                                          value={quizTextAnswers[q.id] || ''}
+                                          onChange={(e) => handleQuizTextChange(q.id, e.target.value)}
+                                          placeholder="e.g. isteCTF{...} or CTF{...} or calculated value"
+                                          className="w-full px-3.5 py-2.5 rounded-lg border border-mist focus:border-signal focus:ring-1 focus:ring-signal bg-white font-mono text-xs text-ink placeholder:font-sans placeholder:text-ink-muted/50 disabled:bg-paper/80 disabled:cursor-not-allowed"
+                                        />
+                                        {quizTextAnswers[q.id]?.trim() && (
+                                          <span className="absolute right-3 top-2.5 text-xs text-emerald-600 font-bold flex items-center gap-1">
+                                            <CheckCircle2 className="w-3.5 h-3.5" /> Ready
                                           </span>
-                                          <span className="pt-0.5 leading-snug flex-1">{opt}</span>
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] text-ink-muted block">
+                                        Flags format: <code className="bg-paper px-1 py-0.5 rounded font-mono">isteCTF&#123;...&#125;</code>, <code className="bg-paper px-1 py-0.5 rounded font-mono">CTF&#123;...&#125;</code>, <code className="bg-paper px-1 py-0.5 rounded font-mono">AIML&#123;...&#125;</code>, or bare inner string.
+                                      </span>
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -2074,7 +2235,14 @@ export const TeamPortal: React.FC = () => {
                                     {isLeader ? 'Ready to Submit Responses' : 'Team Assessment In Progress'}
                                   </span>
                                   <span className="text-[11px] text-mist-dark">
-                                    {Object.keys(quizSelectedAnswers).length} of {quizQuestions.length} questions answered
+                                    {
+                                      quizQuestions.filter(
+                                        (q) =>
+                                          quizSelectedAnswers[q.id] !== undefined ||
+                                          !!quizTextAnswers[q.id]?.trim()
+                                      ).length
+                                    }{' '}
+                                    of {quizQuestions.length} challenges answered
                                     {isLeader
                                       ? ' • Submissions are final and locked once submitted'
                                       : ' • Submissions can only be finalized by your team leader'}

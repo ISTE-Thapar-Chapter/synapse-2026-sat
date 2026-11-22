@@ -35,8 +35,10 @@ export interface IMentorEvaluation {
   mentorId?: Types.ObjectId | null;
   mentorName: string;
   mentorEmail: string;
+  gradedBy?: string;
   featureGrades: IMentorFeatureGrade[];
   totalFeatureMarks: number; // 0 to 50
+  totalMarks?: number;
   overallAccuracyScore: number; // 0 to 100
   overallConfidenceScore: number; // 0 to 100
   gradedAt: Date;
@@ -62,6 +64,7 @@ export interface ISubmissionPayload {
   // Stage 2: 5 Feature sets (Company names only)
   features?: IFeatureSetItem[];
   requirements?: IRequirementAnswer[];
+  methodologySummary?: string;
   generalNotes?: string;
 
   // Mentor evaluation per feature set

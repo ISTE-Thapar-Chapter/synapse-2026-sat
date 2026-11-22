@@ -331,20 +331,23 @@ export const TeamPortal: React.FC = () => {
         | 'requirements'
         | 'leaderboard'
         | 'companies'
+        | 'final'
         | null;
 
       if (savedSection) {
         // Validate that savedSection is accessible
-        if (savedSection === 'companies') {
+        if (savedSection === 'final') {
+          setActiveSection('final');
+        } else if (savedSection === 'companies') {
           setActiveSection('companies');
-        } else if (savedSection === 'leaderboard' && data.hasSubmittedRequirements) {
+        } else if (savedSection === 'leaderboard' && data.hasSubmittedCleaning) {
           setActiveSection('leaderboard');
         } else if (savedSection === 'requirements' && data.hasSubmittedCleaning) {
           setActiveSection('requirements');
         } else if (savedSection === 'cleaning') {
           setActiveSection('cleaning');
-        } else if (data.hasSubmittedRequirements) {
-          setActiveSection('leaderboard');
+        } else if (data.hasSubmittedFinal) {
+          setActiveSection('final');
         } else if (data.hasSubmittedCleaning) {
           setActiveSection('requirements');
         } else {
@@ -352,8 +355,8 @@ export const TeamPortal: React.FC = () => {
         }
       } else {
         // Default to latest unlocked
-        if (data.hasSubmittedRequirements) {
-          setActiveSection('leaderboard');
+        if (data.hasSubmittedFinal) {
+          setActiveSection('final');
         } else if (data.hasSubmittedCleaning) {
           setActiveSection('requirements');
         } else {
@@ -857,7 +860,7 @@ export const TeamPortal: React.FC = () => {
             <div>
               <h3 className="text-lg font-bold text-ink">Evaluation Finalized</h3>
               <p className="text-xs text-ink-muted max-w-md mx-auto mt-1">
-                Your dataset cleaning and requirements methodologies have been officially reviewed. Standings and verified rankings are available on the Leaderboard.
+                Your dataset cleaning submission has been officially reviewed. Standings and verified rankings are available on the Leaderboard.
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
@@ -912,15 +915,15 @@ export const TeamPortal: React.FC = () => {
                 <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" />
                 Waiting for Admin Launch
               </span>
-            ) : hasSubmittedRequirements ? (
+            ) : hasSubmittedFinal ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                All Submissions Completed
+                Final Project Submitted
               </span>
             ) : hasSubmittedCleaning ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-50 text-blue-800 text-xs font-semibold border border-blue-200">
-                <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                Requirements In Progress
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                Dataset Cleaned & Submitted
               </span>
             ) : (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-signal-light/40 text-signal text-xs font-semibold border border-signal/20">
@@ -1061,7 +1064,7 @@ export const TeamPortal: React.FC = () => {
             >
               <div
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                  hasSubmittedRequirements
+                  isValidationDatasetReleased
                     ? 'bg-emerald-600 text-white'
                     : hasSubmittedCleaning
                     ? activeSection === 'requirements'
@@ -1070,7 +1073,7 @@ export const TeamPortal: React.FC = () => {
                     : 'bg-mist text-ink-muted'
                 }`}
               >
-                {hasSubmittedRequirements || isValidationDatasetReleased ? (
+                {isValidationDatasetReleased ? (
                   <CheckCircle2 className="w-4 h-4" />
                 ) : !hasSubmittedCleaning ? (
                   <Lock className="w-3.5 h-3.5" />
@@ -1099,7 +1102,7 @@ export const TeamPortal: React.FC = () => {
               disabled={!hasSubmittedCleaning}
               onClick={() => handleSelectSection('leaderboard')}
               className={`flex-1 min-w-[180px] flex items-center gap-3 p-3 rounded-md text-left transition-all ${
-                !hasSubmittedRequirements
+                !hasSubmittedCleaning
                   ? 'opacity-50 cursor-not-allowed text-ink-muted'
                   : activeSection === 'leaderboard'
                   ? 'bg-ink text-white shadow-sm'
@@ -1108,14 +1111,14 @@ export const TeamPortal: React.FC = () => {
             >
               <div
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                  hasSubmittedRequirements
+                  hasSubmittedCleaning
                     ? activeSection === 'leaderboard'
                       ? 'bg-signal text-white'
                       : 'bg-mist-dark text-ink'
                     : 'bg-mist text-ink-muted'
                 }`}
               >
-                {!hasSubmittedRequirements ? <Lock className="w-3.5 h-3.5" /> : <Award className="w-4 h-4" />}
+                {!hasSubmittedCleaning ? <Lock className="w-3.5 h-3.5" /> : <Award className="w-4 h-4" />}
               </div>
               <div>
                 <div className="text-xs font-bold leading-tight">Live Leaderboard</div>
@@ -1124,7 +1127,7 @@ export const TeamPortal: React.FC = () => {
                     activeSection === 'leaderboard' ? 'text-gray-300' : 'text-ink-muted'
                   }`}
                 >
-                  {!hasSubmittedRequirements ? 'Locked until Step 2 submitted' : 'Team Standings & Scores'}
+                  {!hasSubmittedCleaning ? 'Locked until Step 1 submitted' : 'Team Standings & Scores'}
                 </div>
               </div>
             </button>

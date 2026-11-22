@@ -184,9 +184,9 @@ router.get('/current', async (req: Request, res: Response, next: NextFunction) =
     let sanitizedRequirementsSub = requirementsSubmission;
     let sanitizedSub = !hasSubmittedCleaning
       ? cleaningSubmission
-      : !hasSubmittedRequirements
-      ? requirementsSubmission
-      : finalSubmission || requirementsSubmission;
+      : hasSubmittedFinal
+      ? finalSubmission
+      : cleaningSubmission;
 
     if (!isStaff && sanitizedRequirementsSub?.payload?.mentorEvaluation) {
       const sanitizedPayload = {
@@ -330,11 +330,11 @@ router.put('/draft', requireTeamLeader, async (req: Request, res: Response, next
         });
       }
     } else if (stage === 'final-submission') {
-      const reqSub = await Submission.findOne({ stage: 'requirements', teamId: team._id, status: 'submitted' });
-      if (!reqSub) {
+      const cleanSub = await Submission.findOne({ stage: 'cleaning', teamId: team._id, status: 'submitted' });
+      if (!cleanSub) {
         return res.status(400).json({
           error: 'Prerequisite Required',
-          message: 'You must submit your feature identifications before editing the final project submission.',
+          message: 'You must submit your cleaned dataset before editing the final project submission.',
         });
       }
     }
@@ -440,11 +440,11 @@ router.post('/submit', requireTeamLeader, async (req: Request, res: Response, ne
         });
       }
 
-      const reqSub = await Submission.findOne({ stage: 'requirements', teamId: team._id, status: 'submitted' });
-      if (!reqSub) {
+      const cleanSub = await Submission.findOne({ stage: 'cleaning', teamId: team._id, status: 'submitted' });
+      if (!cleanSub) {
         return res.status(400).json({
           error: 'Prerequisite Required',
-          message: 'You must submit your feature identifications before submitting your final project.',
+          message: 'You must submit your cleaned dataset before submitting your final project.',
         });
       }
 

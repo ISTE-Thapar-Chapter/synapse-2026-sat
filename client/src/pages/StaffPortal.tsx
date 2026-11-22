@@ -581,7 +581,6 @@ export const StaffPortal: React.FC = () => {
     setLoading(true);
     setNotice(null);
     try {
-      const titles = featureDefs.map((f) => f.title.trim()).filter((t) => t.length > 0);
       const updated = await api.patch<CompetitionConfig>('/admin/config', {
         cleaningDatasetTitle: datasetTitle,
         cleaningDatasetUrl: datasetUrl,
@@ -589,11 +588,9 @@ export const StaffPortal: React.FC = () => {
         validationDatasetTitle: valDatasetTitle,
         validationDatasetUrl: valDatasetUrl,
         validationDatasetDescription: valDatasetDesc,
-        requirementTitles: titles.length > 0 ? titles : reqTitles.filter((t) => t.trim().length > 0),
-        featureDefinitions: featureDefs,
       });
       setConfig(updated);
-      setNotice({ type: 'success', message: 'Dataset and feature answer key updated successfully.' });
+      setNotice({ type: 'success', message: 'Competition datasets updated successfully.' });
     } catch (err: any) {
       setNotice({ type: 'error', message: err.message || 'Failed to update configuration.' });
     } finally {
@@ -1703,7 +1700,7 @@ export const StaffPortal: React.FC = () => {
                 }`}
               >
                 <FileCode className="w-4 h-4" />
-                <span>Dataset & Requirements</span>
+                <span>Competition Datasets</span>
               </button>
             )}
 
@@ -3812,11 +3809,11 @@ export const StaffPortal: React.FC = () => {
       {/* Tab: Dataset & 5 Requirements Config */}
       {isAdmin && activeTab === 'config' && (
         <Card
-          title="Challenge Materials & Requirements Setup"
-          subtitle="Configure the official challenge dataset and the 5 vertical challenge tracks"
+          title="Competition Datasets Setup"
+          subtitle="Configure the uniform cleaning dataset and holdout validation dataset"
           action={
             <Button variant="primary" size="sm" loading={loading} onClick={handleSaveConfig}>
-              Save Configuration
+              Save Datasets Configuration
             </Button>
           }
         >
@@ -3921,53 +3918,6 @@ export const StaffPortal: React.FC = () => {
                   placeholder="Holdout evaluation criteria, accuracy benchmarks, feature format requirements..."
                   className="input-field text-xs"
                 />
-              </div>
-            </div>
-
-            <div className="p-4 bg-paper rounded border border-mist space-y-4">
-              <div>
-                <h4 className="text-sm font-bold text-ink">5 Feature Tracks & Expected Company Answer Keys</h4>
-                <p className="text-xs text-ink-muted mt-0.5">
-                  Set the feature track titles and correct company answers. System automatically calculates marks upon submission, which mentors can review and adjust.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                {featureDefs.map((def, idx) => (
-                  <div key={idx} className="p-3 bg-white rounded border border-mist space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-6 text-xs font-bold text-signal">#{idx + 1}</span>
-                      <input
-                        type="text"
-                        value={def.title}
-                        onChange={(e) => {
-                          const updated = [...featureDefs];
-                          updated[idx] = { ...updated[idx], title: e.target.value };
-                          setFeatureDefs(updated);
-                          const updatedReqs = [...reqTitles];
-                          updatedReqs[idx] = e.target.value;
-                          setReqTitles(updatedReqs);
-                        }}
-                        placeholder={`Feature set ${idx + 1} title (e.g. Behavioral Pattern & Cloud Infrastructure)...`}
-                        className="input-field text-xs flex-1"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 pl-8">
-                      <span className="text-[11px] font-semibold text-ink-muted w-32 shrink-0">Expected Company:</span>
-                      <input
-                        type="text"
-                        value={def.expectedCompany}
-                        onChange={(e) => {
-                          const updated = [...featureDefs];
-                          updated[idx] = { ...updated[idx], expectedCompany: e.target.value };
-                          setFeatureDefs(updated);
-                        }}
-                        placeholder={`Correct company answer (e.g. Spotify, Uber, Stripe)...`}
-                        className="input-field text-xs flex-1 font-medium text-signal"
-                      />
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
           </div>
@@ -4665,7 +4615,7 @@ export const StaffPortal: React.FC = () => {
               onChange={(e) => setNewAccountRole(e.target.value as any)}
               className="input-field"
             >
-              <option value="mentor">Mentor (Reviews 5 feature sets, grades accuracy & confidence)</option>
+              <option value="mentor">Mentor (Reviews cleaned dataset, grades accuracy & confidence)</option>
               <option value="evaluator">Evaluator (Evaluates team submissions and gives scores)</option>
               <option value="desk">Registration Desk (Onboard teams & manage rosters)</option>
               <option value="admin">Administrator (Full portal, event control & team management)</option>

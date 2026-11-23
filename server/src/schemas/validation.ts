@@ -222,6 +222,8 @@ export const AuctionCompanyItemSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(2, 'Company name is required'),
   description: z.string().min(5, 'Description must be at least 5 characters'),
+  sector: z.string().optional().default(''),
+  tier: z.string().optional().default(''),
   basePrice: z.number().min(0, 'Base price cannot be negative').optional().default(0),
 });
 

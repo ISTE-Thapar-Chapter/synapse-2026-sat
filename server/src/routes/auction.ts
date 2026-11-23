@@ -61,16 +61,23 @@ router.get('/companies', async (req: Request, res: Response, next: NextFunction)
         id: `auc_${idx + 1}`,
         name: c.name,
         description: c.description,
-        basePrice: getRandomCompanyTokenPrice(),
+        sector: c.sector || '',
+        tier: c.tier || '',
+        basePrice: c.basePrice ?? getRandomCompanyTokenPrice(),
         isAssigned: false,
       }));
       await config.save();
     } else if (hasLegacyPrices) {
       // Randomize tokens count for existing companies that still have legacy 50
-      config.auctionCompanies = config.auctionCompanies.map((c) => ({
-        ...c,
-        basePrice: c.basePrice === 50 ? getRandomCompanyTokenPrice() : (c.basePrice || getRandomCompanyTokenPrice()),
-      }));
+      config.auctionCompanies = config.auctionCompanies.map((c, idx) => {
+        const def = NON_TECHNOLOGY_COMPANIES.find((d) => d.name.toLowerCase() === c.name.toLowerCase()) || NON_TECHNOLOGY_COMPANIES[idx];
+        return {
+          ...c,
+          sector: c.sector || def?.sector || '',
+          tier: c.tier || def?.tier || '',
+          basePrice: c.basePrice === 50 ? (def?.basePrice ?? getRandomCompanyTokenPrice()) : (c.basePrice || def?.basePrice || getRandomCompanyTokenPrice()),
+        };
+      });
       await config.save();
     }
 
@@ -114,6 +121,42 @@ router.post('/companies/randomize', requireAuth, requireRole(['admin']), async (
 });
 
 /**
+ * Admin route: Reset Bucket 2 companies to official default non-tech list and token prices
+ */
+router.post('/companies/reset', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    let config = await CompetitionConfig.findOne();
+    if (!config) config = await CompetitionConfig.create({});
+
+    config.auctionCompanies = NON_TECHNOLOGY_COMPANIES.map((c, idx) => ({
+      id: `auc_${idx + 1}`,
+      name: c.name,
+      description: c.description,
+      sector: c.sector || '',
+      tier: c.tier || '',
+      basePrice: c.basePrice ?? getRandomCompanyTokenPrice(),
+      isAssigned: false,
+    }));
+    await config.save();
+
+    await logAudit(
+      req.user!.email,
+      'AUCTION_COMPANIES_RESET_DEFAULT',
+      'CompetitionConfig',
+      config._id.toString(),
+      { count: config.auctionCompanies.length }
+    );
+
+    return res.json({
+      message: 'Default non-technology companies restored successfully with official token prices.',
+      companies: config.auctionCompanies,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * Admin route: Update Bucket 2 auction companies (add/edit/delete)
  */
 router.put('/companies', requireAuth, requireRole(['admin']), async (req: Request, res: Response, next: NextFunction) => {
@@ -131,6 +174,8 @@ router.put('/companies', requireAuth, requireRole(['admin']), async (req: Reques
         id,
         name: c.name.trim(),
         description: c.description.trim(),
+        sector: c.sector !== undefined ? c.sector : (existing?.sector || ''),
+        tier: c.tier !== undefined ? c.tier : (existing?.tier || ''),
         basePrice: c.basePrice || 0,
         isAssigned: existing?.isAssigned || false,
         assignedToTeamId: existing?.assignedToTeamId || null,
@@ -520,11 +565,16 @@ router.post('/staff/start-item', requireAuth, requireRole(['admin']), async (req
     let config = await CompetitionConfig.findOne();
     if (!config) config = await CompetitionConfig.create({});
 
+    const sector = req.body.sector || '';
+    const tier = req.body.tier || '';
+
     config.liveAuction = {
       activeItem: {
         id: itemId,
         name: name.trim(),
         description: description ? description.trim() : 'Company up for live bidding.',
+        sector,
+        tier,
         basePrice,
       },
       status: 'bidding',

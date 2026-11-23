@@ -6,6 +6,9 @@ export interface ICompanyPoolItem {
   id: string;
   name: string;
   description: string;
+  sector?: string;
+  tier?: string;
+  basePrice?: number;
   isAssigned: boolean;
   assignedToTeamId?: Types.ObjectId | null;
   assignedToTeamName?: string | null;
@@ -45,6 +48,9 @@ const CompanyPoolItemSchema = new Schema<ICompanyPoolItem>(
     id: { type: String, required: true },
     name: { type: String, required: true, trim: true },
     description: { type: String, required: true, trim: true },
+    sector: { type: String, default: '' },
+    tier: { type: String, default: '' },
+    basePrice: { type: Number, default: 0 },
     isAssigned: { type: Boolean, default: false },
     assignedToTeamId: { type: Schema.Types.ObjectId, ref: 'Team', default: null },
     assignedToTeamName: { type: String, default: null },

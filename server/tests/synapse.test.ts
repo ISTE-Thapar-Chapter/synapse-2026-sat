@@ -1371,7 +1371,8 @@ describe('10. Two-Queue Round Robin Company Selection with 2-Minute Burst Time',
       const q2 = await RoundRobinService.getQueue(2);
       expect(q2.companies.length).toBe(40);
       expect(q2.companies[0].name).toBe('Johnson & Johnson');
-      expect(q2.companies[39].name).toBe('Procter & Gamble');
+      expect(q2.companies[39].name).toBe('Procter & Gamble (P&G)');
+      expect(q2.companies[39].basePrice).toBe(575000);
     });
   });
 });

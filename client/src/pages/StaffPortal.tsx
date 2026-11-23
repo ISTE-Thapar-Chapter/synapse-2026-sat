@@ -1161,6 +1161,20 @@ export const StaffPortal: React.FC = () => {
     }
   };
 
+  const handleResetAuctionCompanies = async () => {
+    if (!confirm('Reset Bucket 2 to the official default non-technology companies with their standard token prices?')) return;
+    setAuctionActionLoading(true);
+    try {
+      const res = await api.post<{ message: string; companies: any[] }>('/auction/companies/reset');
+      setAuctionCompanies(res.companies || []);
+      setNotice({ type: 'success', message: res.message || 'Restored default non-tech companies successfully.' });
+    } catch (err: any) {
+      setNotice({ type: 'error', message: err.message || 'Failed to restore default companies.' });
+    } finally {
+      setAuctionActionLoading(false);
+    }
+  };
+
   const handleSaveEditAuctionCompany = async (id: string) => {
     const updated = auctionCompanies.map((c) =>
       c.id === id
@@ -2822,14 +2836,24 @@ export const StaffPortal: React.FC = () => {
                   </h5>
                   <div className="flex items-center gap-2">
                     {isAdmin && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={handleRandomizeCompanyTokens}
-                        loading={auctionActionLoading}
-                      >
-                        🎲 Randomize Tokens
-                      </Button>
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleResetAuctionCompanies}
+                          loading={auctionActionLoading}
+                        >
+                          🔄 Reset Defaults
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleRandomizeCompanyTokens}
+                          loading={auctionActionLoading}
+                        >
+                          🎲 Randomize Tokens
+                        </Button>
+                      </>
                     )}
                     <Button variant="secondary" size="sm" icon={<RotateCw className="w-3 h-3" />} onClick={loadAuctionData}>
                       Refresh
@@ -2854,9 +2878,23 @@ export const StaffPortal: React.FC = () => {
                               {comp.name}
                             </h6>
                             <Badge variant={comp.isAssigned ? 'success' : 'signal'}>
-                              {comp.isAssigned ? 'Assigned' : `Base: ${comp.basePrice}`}
+                              {comp.isAssigned ? 'Assigned' : `Base: ${comp.basePrice.toLocaleString()} Tokens`}
                             </Badge>
                           </div>
+                          {(comp.sector || comp.tier) && (
+                            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                              {comp.sector && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-mist/60 text-ink">
+                                  {comp.sector}
+                                </span>
+                              )}
+                              {comp.tier && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-signal/10 text-signal font-mono">
+                                  {comp.tier}
+                                </span>
+                              )}
+                            </div>
+                          )}
                           <p className="text-xs text-ink-muted leading-relaxed line-clamp-3">
                             {comp.description}
                           </p>
@@ -2880,7 +2918,7 @@ export const StaffPortal: React.FC = () => {
                         </div>
 
                         <div className="flex items-center justify-between pt-2 border-t border-mist text-xs">
-                          <span className="font-mono text-ink-muted text-[11px]">{comp.basePrice} Tokens</span>
+                          <span className="font-mono text-ink-muted text-[11px]">{comp.basePrice.toLocaleString()} Tokens</span>
                           <div className="flex items-center gap-1.5">
                             <Button
                               variant="secondary"

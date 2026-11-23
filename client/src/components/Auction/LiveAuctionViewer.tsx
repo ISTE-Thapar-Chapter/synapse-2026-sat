@@ -144,6 +144,20 @@ export const LiveAuctionViewer: React.FC<LiveAuctionViewerProps> = ({ className 
                 <h4 className="text-xl font-serif font-bold text-ink">
                   {activeItem.name}
                 </h4>
+                {(activeItem.sector || activeItem.tier) && (
+                  <div className="flex flex-wrap items-center gap-1.5 my-1.5">
+                    {activeItem.sector && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-mist/60 text-ink">
+                        {activeItem.sector}
+                      </span>
+                    )}
+                    {activeItem.tier && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-signal/10 text-signal font-mono">
+                        {activeItem.tier}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-ink leading-relaxed max-w-xl">
                   {activeItem.description || 'Enterprise collaboration and system track partner.'}
                 </p>

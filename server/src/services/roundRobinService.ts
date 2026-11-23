@@ -14,8 +14,8 @@ import {
   NON_TECHNOLOGY_COMPANIES,
 } from '../config/defaultCompanies.js';
 
-export const DEFAULT_QUEUE_1_COMPANIES: Array<{ name: string; description: string }> = TECHNOLOGY_COMPANIES;
-export const DEFAULT_QUEUE_2_COMPANIES: Array<{ name: string; description: string }> = NON_TECHNOLOGY_COMPANIES;
+export const DEFAULT_QUEUE_1_COMPANIES: Array<{ name: string; description: string; sector?: string; tier?: string; basePrice?: number }> = TECHNOLOGY_COMPANIES;
+export const DEFAULT_QUEUE_2_COMPANIES: Array<{ name: string; description: string; sector?: string; tier?: string; basePrice?: number }> = NON_TECHNOLOGY_COMPANIES;
 
 export class RoundRobinService {
   /**
@@ -30,6 +30,9 @@ export class RoundRobinService {
         id: `q${queueNumber}-c${idx + 1}`,
         name: c.name,
         description: c.description,
+        sector: c.sector || '',
+        tier: c.tier || '',
+        basePrice: c.basePrice || 0,
         isAssigned: false,
         assignedToTeamId: null,
         assignedToTeamName: null,
@@ -58,6 +61,9 @@ export class RoundRobinService {
         id: `q${queueNumber}-c${idx + 1}`,
         name: c.name,
         description: c.description,
+        sector: c.sector || '',
+        tier: c.tier || '',
+        basePrice: c.basePrice || 0,
         isAssigned: false,
         assignedToTeamId: null,
         assignedToTeamName: null,

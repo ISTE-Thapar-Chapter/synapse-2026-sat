@@ -124,6 +124,8 @@ export interface LiveAuctionItem {
   id: string;
   name: string;
   description: string;
+  sector?: string;
+  tier?: string;
   basePrice?: number;
 }
 
@@ -146,6 +148,8 @@ export interface AuctionCompanyItem {
   id: string;
   name: string;
   description: string;
+  sector?: string;
+  tier?: string;
   basePrice: number;
   isAssigned?: boolean;
   assignedToTeamId?: string | null;

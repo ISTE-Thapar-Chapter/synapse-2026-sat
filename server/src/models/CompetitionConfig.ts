@@ -11,6 +11,8 @@ export interface ILiveAuctionItem {
   id: string;
   name: string;
   description: string;
+  sector?: string;
+  tier?: string;
   basePrice?: number;
 }
 
@@ -33,6 +35,8 @@ export interface IAuctionCompanyItem {
   id: string;
   name: string;
   description: string;
+  sector?: string;
+  tier?: string;
   basePrice: number;
   isAssigned?: boolean;
   assignedToTeamId?: mongoose.Types.ObjectId | null;
@@ -196,6 +200,8 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
         id: { type: String, default: null },
         name: { type: String, default: '' },
         description: { type: String, default: '' },
+        sector: { type: String, default: '' },
+        tier: { type: String, default: '' },
         basePrice: { type: Number, default: 0 },
       },
       status: {
@@ -220,6 +226,8 @@ const CompetitionConfigSchema = new Schema<ICompetitionConfig>(
         id: { type: String, required: true },
         name: { type: String, required: true, trim: true },
         description: { type: String, required: true, trim: true },
+        sector: { type: String, default: '' },
+        tier: { type: String, default: '' },
         basePrice: { type: Number, default: 0 },
         isAssigned: { type: Boolean, default: false },
         assignedToTeamId: { type: Schema.Types.ObjectId, ref: 'Team', default: null },
